@@ -58,4 +58,11 @@ export const api = {
     updateItem: (listId, itemId, body) => request(`/api/shopping-lists/${listId}/items/${itemId}`, { method: 'PATCH', body: JSON.stringify(body) }),
     deleteItem: (listId, itemId) => request(`/api/shopping-lists/${listId}/items/${itemId}`, { method: 'DELETE' }),
   },
+  scanDeliveryNote: {
+    analyze: (imageBase64) =>
+      request('/api/scan-delivery-note', {
+        method: 'POST',
+        body: JSON.stringify({ image: imageBase64 }),
+      }),
+  },
 };

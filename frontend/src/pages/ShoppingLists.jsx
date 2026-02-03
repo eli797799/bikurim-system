@@ -82,9 +82,14 @@ export default function ShoppingLists() {
     <>
       <h1 className="page-title">פקודות רכש</h1>
       <div className="card">
-        <button type="button" className="btn btn-primary" onClick={() => setShowForm(!showForm)} style={{ marginBottom: '1rem' }}>
-          {showForm ? 'ביטול' : 'פקודת רכש חדשה'}
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+          <button type="button" className="btn btn-primary" onClick={() => setShowForm(!showForm)}>
+            {showForm ? 'ביטול' : 'פקודת רכש חדשה'}
+          </button>
+          <Link to="/scan-delivery-note" className="btn btn-secondary">
+            סריקת תעודת משלוח
+          </Link>
+        </div>
         {showForm && (
           <form onSubmit={submit} style={{ padding: '1rem', background: 'var(--bg)', borderRadius: 'var(--radius)', maxWidth: 700 }}>
             <div className="form-group">

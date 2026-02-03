@@ -5,6 +5,7 @@
 | משתנה       | חובה | ערך לדוגמה | הערות |
 |-------------|------|------------|--------|
 | `DATABASE_URL` | ✓ | `postgresql://postgres:YOUR_PASSWORD@db.xxxx.supabase.co:5432/postgres` | מחרוזת החיבור מ-Supabase: Dashboard → Project Settings → Database → Connection string (URI). |
+| `GOOGLE_API_KEY` | אופציונלי | `AIza...` | מפתח Google Gemini API לסריקת תעודות משלוח. השג ב-[Google AI Studio](https://aistudio.google.com/apikey). |
 | `NODE_ENV`  | אופציונלי | `production` | מוגדר אוטומטית ב-`render.yaml`. |
 
 **איפה להזין ב-Render:** Dashboard → Service → Environment → Add Environment Variable.

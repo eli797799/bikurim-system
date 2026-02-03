@@ -5,6 +5,7 @@ import Products from './pages/Products';
 import ProductCard from './pages/ProductCard';
 import ShoppingLists from './pages/ShoppingLists';
 import ShoppingListCard from './pages/ShoppingListCard';
+import ScanDeliveryNote from './pages/ScanDeliveryNote';
 
 function App() {
   return (
@@ -25,6 +26,9 @@ function App() {
             <NavLink to="/shopping-lists" className={({ isActive }) => (isActive ? 'active' : '')}>
               פקודות רכש
             </NavLink>
+            <NavLink to="/scan-delivery-note" className={({ isActive }) => (isActive ? 'active' : '')}>
+              סריקת תעודה
+            </NavLink>
           </nav>
         </aside>
         <main className="main">
@@ -36,6 +40,7 @@ function App() {
             <Route path="/products/:id" element={<ProductCard />} />
             <Route path="/shopping-lists" element={<ShoppingLists />} />
             <Route path="/shopping-lists/:id" element={<ShoppingListCard />} />
+            <Route path="/scan-delivery-note" element={<ScanDeliveryNote />} />
           </Routes>
         </main>
       </div>

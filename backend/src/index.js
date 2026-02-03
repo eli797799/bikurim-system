@@ -8,6 +8,7 @@ import suppliersRouter from './routes/suppliers.js';
 import productsRouter from './routes/products.js';
 import categoriesRouter from './routes/categories.js';
 import shoppingListsRouter from './routes/shopping-lists.js';
+import scanDeliveryNoteRouter from './routes/scan-delivery-note.js';
 import { errorHandler } from './middleware/error.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -17,12 +18,13 @@ const app = express();
 const PORT = process.env.PORT || process.env.BACKEND_PORT || 5000;
 
 app.use(cors({ origin: true }));
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '6mb' }));
 
 app.use('/api/suppliers', suppliersRouter);
 app.use('/api/products', productsRouter);
 app.use('/api/categories', categoriesRouter);
 app.use('/api/shopping-lists', shoppingListsRouter);
+app.use('/api/scan-delivery-note', scanDeliveryNoteRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, message: 'Bikurim API' });
