@@ -7,6 +7,7 @@ export default function ScanDeliveryNote() {
   const navigate = useNavigate();
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const [step, setStep] = useState('camera'); // camera | review
   const [cameraError, setCameraError] = useState(null);
@@ -63,7 +64,23 @@ export default function ScanDeliveryNote() {
   const retake = () => {
     setCapturedImage(null);
     setScanError(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     startCamera();
+  };
+
+  const pickFromGallery = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setCapturedImage(reader.result);
+      stopCamera();
+    };
+    reader.readAsDataURL(file);
   };
 
   const analyze = async () => {
@@ -155,6 +172,13 @@ export default function ScanDeliveryNote() {
           )}
           {!capturedImage ? (
             <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleFileSelect}
+                style={{ display: 'none' }}
+              />
               <div
                 style={{
                   position: 'relative',
@@ -175,9 +199,14 @@ export default function ScanDeliveryNote() {
                   style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                 />
               </div>
-              <button type="button" className="btn btn-primary" onClick={capture} disabled={!!cameraError}>
-                צלם תמונה
-              </button>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <button type="button" className="btn btn-primary" onClick={capture} disabled={!!cameraError}>
+                  צלם תמונה
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={pickFromGallery}>
+                  בחר מהגלריה
+                </button>
+              </div>
             </>
           ) : (
             <>
