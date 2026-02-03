@@ -1,0 +1,26 @@
+{
+  "name": "ביכורים",
+  "short_name": "ביכורים",
+  "description": "מערכת קניין ורשימות קנייה – ביכורים תעשיות מזון",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f8f9fc",
+  "theme_color": "#0d47a1",
+  "lang": "he",
+  "dir": "rtl",
+  "icons": [
+    {
+      "src": "/bikurim-logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/bikurim-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

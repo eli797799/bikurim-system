@@ -80,6 +80,9 @@ npx vercel --prod
 2. **Environment**:
    - `DATABASE_URL` = connection string של PostgreSQL (מ-Render או חיצוני).
    - `NODE_ENV` = `production` (אם לא כבר).
+   - `GROQ_API_KEY` = מפתח Groq (לוח מכוונים – תחזיות מלאי, מודל llama-3.3-70b-versatile).
+   - `GOOGLE_API_KEY_BACKUP` = מפתח Gemini גיבוי (אם Groq לא זמין).
+   - `GOOGLE_API_KEY` = מפתח Gemini (סריקת תעודות, ניסוח מייל).
 3. **Deploy**:
    - אם ה-repo מחובר – Deploy אוטומטי אחרי `git push`.
    - או **Manual Deploy** → **Deploy latest commit**.
@@ -107,7 +110,21 @@ cd backend && node run-all-migrations.js
 
 ---
 
-## 5. סיכום פקודות (הכל ברצף)
+## 5. רענון ניתוח AI לתחזית (יומי)
+
+ניתוח ה-AI בתחזית המוצרים נשמר במסד הנתונים. כדי שיעודכן אוטומטית כל יום:
+
+- **Endpoint:** `GET /api/dashboard/refresh-forecast-analysis` (על ה-Backend ב-Render).
+- **פעולה:** מריץ ניתוח (Groq/Gemini) לכל מוצרים בתחזית (30, 60, 90 יום) ושומר את התוצאות.
+- **Cron:** ב-Render – **Dashboard** → **Cron Jobs** → צור Cron Job חדש:
+  - **Schedule:** `0 6 * * *` (כל יום ב־06:00) או לפי צורך.
+  - **Command:** `curl -X GET "https://bikurim-api.onrender.com/api/dashboard/refresh-forecast-analysis"` (החלף בכתובת ה-API האמיתית).
+
+אחרי הרצה יומית, בלוח המכוונים יוצג הניתוח השמור עם ציון "עודכן ב־[תאריך]".
+
+---
+
+## 6. סיכום פקודות (הכל ברצף)
 
 ```bash
 # 1. מיגרציות (מהשורש של הפרויקט, עם .env שמכיל DATABASE_URL)
@@ -120,3 +137,5 @@ git push origin main
 ```
 
 אחרי ה-push: Vercel ו-Render יעלו אוטומטית (אם ה-repo מחובר). וודא ש-`VITE_API_URL` ב-Vercel מצביע ל-URL של ה-Backend ב-Render.
+
+**מיגרציה חדשה:** אם הוספת `migration_forecast_analysis.sql`, הרץ `node backend/run-all-migrations.js` (פעם אחת).

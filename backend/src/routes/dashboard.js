@@ -122,6 +122,27 @@ async function getForecast(days = 30) {
       has_sufficient_history: totalOut > 0,
     };
   });
+
+  const productIds = list.map((f) => f.product_id);
+  if (productIds.length > 0) {
+    const analysisRes = await query(
+      `SELECT product_id, forecast_days, risk, trend, explanation, recommendation, analyzed_at
+       FROM forecast_analysis
+       WHERE forecast_days = $1 AND product_id = ANY($2::int[])`,
+      [numDays, productIds]
+    );
+    const analysisByProduct = Object.fromEntries(analysisRes.rows.map((r) => [r.product_id, r]));
+    list.forEach((row) => {
+      const a = analysisByProduct[row.product_id];
+      if (a) {
+        row.analysis_risk = a.risk;
+        row.analysis_trend = a.trend;
+        row.analysis_explanation = a.explanation;
+        row.analysis_recommendation = a.recommendation;
+        row.analysis_analyzed_at = a.analyzed_at;
+      }
+    });
+  }
   return { days: numDays, forecast: list };
 }
 
@@ -204,6 +225,87 @@ function getRawTextFromResult(result, isGroq = false) {
   }
   return result?.response?.text?.()?.trim() || '';
 }
+
+/** הרצת ניתוח AI על שורת תחזית אחת – Groq ראשי, Gemini גיבוי */
+async function runForecastAnalysis(row, forecastDays) {
+  const groqKey = process.env.GROQ_API_KEY;
+  const backupKey = process.env.GOOGLE_API_KEY_BACKUP;
+  if (!groqKey && !backupKey) return null;
+  const text = `מוצר: ${row.product_name || 'לא ידוע'}
+מלאי נוכחי (סה"כ): ${row.total_stock ?? 0}
+שימוש יומי ממוצע: ${row.daily_avg_usage ?? 0}
+ימים עד חוסר (חישוב): ${row.days_until_shortage ?? '—'}
+תאריך משוער לחוסר: ${row.estimated_shortage_date ?? '—'}
+היסטוריה מספקת: ${row.has_sufficient_history ? 'כן' : 'לא'}
+
+${FORECAST_PROMPT}`;
+  let raw = '';
+  if (groqKey) {
+    try {
+      const groq = new Groq({ apiKey: groqKey });
+      const chatCompletion = await groq.chat.completions.create({
+        messages: [{ role: 'user', content: text }],
+        model: GROQ_MODEL,
+      });
+      raw = getRawTextFromResult(chatCompletion, true);
+    } catch (err) {
+      if (!isRateLimitError(err)) throw err;
+    }
+  }
+  if (!raw && backupKey) {
+    await sleep(RETRY_DELAY_MS);
+    try {
+      const genAI = new GoogleGenerativeAI(backupKey);
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const result = await model.generateContent(text);
+      raw = getRawTextFromResult(result, false);
+    } catch (_) {
+      return null;
+    }
+  }
+  if (!raw) return null;
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : { risk: 'בינוני', trend: 'יציב', explanation: '', recommendation: '' };
+  return {
+    risk: parsed.risk || 'בינוני',
+    trend: parsed.trend || 'יציב',
+    explanation: parsed.explanation || '',
+    recommendation: parsed.recommendation || '',
+  };
+}
+
+/** רענון יומי – ניתוח AI לכל מוצרים בתחזית (30, 60, 90 יום). קריאה מ-cron פעם ביום */
+router.get('/refresh-forecast-analysis', async (req, res, next) => {
+  try {
+    const forecastDaysList = [30, 60, 90];
+    let saved = 0;
+    let failed = 0;
+    for (const days of forecastDaysList) {
+      const { forecast } = await getForecast(days);
+      const toAnalyze = forecast.filter((f) => f.total_stock > 0 || (f.daily_avg_usage && f.daily_avg_usage > 0));
+      for (const row of toAnalyze) {
+        const analysis = await runForecastAnalysis(row, days);
+        if (analysis) {
+          await query(
+            `INSERT INTO forecast_analysis (product_id, forecast_days, risk, trend, explanation, recommendation, analyzed_at)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW())
+             ON CONFLICT (product_id, forecast_days) DO UPDATE SET
+               risk = EXCLUDED.risk, trend = EXCLUDED.trend, explanation = EXCLUDED.explanation,
+               recommendation = EXCLUDED.recommendation, analyzed_at = NOW()`,
+            [row.product_id, days, analysis.risk, analysis.trend, analysis.explanation, analysis.recommendation]
+          );
+          saved++;
+        } else {
+          failed++;
+        }
+        await sleep(400);
+      }
+    }
+    res.json({ ok: true, saved, failed, message: `ניתוח נשמר ל־${saved} מוצרים.` });
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.post('/forecast/gemini', async (req, res, next) => {
   try {

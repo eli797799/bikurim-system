@@ -126,6 +126,25 @@ input, select, textarea {
   font-weight: 500;
 }
 
+.sidebar nav .pwa-install-btn {
+  margin-top: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  color: var(--primary);
+  background: transparent;
+  border: 1px solid var(--primary);
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: right;
+  width: 100%;
+  transition: all 0.15s;
+}
+
+.sidebar nav .pwa-install-btn:hover {
+  background: var(--primary);
+  color: #fff;
+}
+
 .main {
   flex: 1;
   padding: var(--space) 2rem calc(var(--space) + 48px);

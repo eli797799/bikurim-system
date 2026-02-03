@@ -22,6 +22,18 @@ function isRateLimitError(err) {
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+/** מחזיר תאריך בפורמט DD/MM/YYYY (ללא GMT / timezone) */
+function formatDateDDMMYYYY(d) {
+  if (!d) return '';
+  const date = typeof d === 'string' ? new Date(d + (d.length === 10 ? 'T12:00:00' : '')) : d;
+  if (Number.isNaN(date.getTime())) return String(d);
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
 const DEFAULT_UNIT = "יח'";
 
 function getCheapestSupplierForProduct(productId) {
@@ -137,17 +149,18 @@ router.post('/:id/draft-email', async (req, res, next) => {
     );
     const items = itemsRes.rows;
     if (items.length === 0) return res.status(400).json({ error: 'אין פריטים בפקודה עבור ספק זה' });
+    const dateStr = formatDateDDMMYYYY(list.list_date);
     const itemsText = items.map((i) => `- ${i.product_name}: ${Number(i.quantity)} ${i.unit_of_measure}`).join('\n');
     const prompt = `נסח מייל מקצועי ומכובד בעברית לספק (לא ללקוח).
 הנתונים:
 - שם הספק: ${supplier.name}
 - פקודת רכש מס': ${list.order_number}
 - שם הפקודה: ${list.name}
-- תאריך: ${list.list_date}
+- תאריך: ${dateStr}
 - רשימת מוצרים וכמויות:
 ${itemsText}
 
-החזר JSON בלבד, בלי markdown:
+החזר JSON בלבד, בלי markdown. הצג תאריכים בפורמט DD/MM/YYYY בלבד, בלי GMT או timezone.
 { "subject": "נושא המייל (משפט קצר)", "body": "גוף המייל בעברית, פסקה או שתיים, כולל פנייה לספק ורשימת המוצרים/כמויות" }`;
 
     const primaryKey = process.env.GOOGLE_API_KEY;
@@ -185,7 +198,7 @@ ${itemsText}
     const raw = result.response?.text?.()?.trim() || '';
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     let subject = `פקודת רכש מס' ${list.order_number} – ביכורים`;
-    let body = `שלום ${supplier.name},\n\nמצורפת פקודת רכש מס' ${list.order_number} (${list.list_date}).\n\nרשימת מוצרים:\n${itemsText}\n\nבברכה,\nביכורים תעשיות מזון בע"מ`;
+    let body = `שלום ${supplier.name},\n\nמצורפת פקודת רכש מס' ${list.order_number} (${dateStr}).\n\nרשימת מוצרים:\n${itemsText}\n\nבברכה,\nביכורים תעשיות מזון בע"מ`;
     if (jsonMatch) {
       try {
         const parsed = JSON.parse(jsonMatch[0]);

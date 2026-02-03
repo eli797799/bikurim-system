@@ -323,7 +323,7 @@ export default function Dashboard() {
                 <th>שימוש יומי ממוצע</th>
                 <th>ימים עד חוסר</th>
                 <th>תאריך משוער לחוסר</th>
-                <th>ניתוח Gemini</th>
+                <th>ניתוח AI</th>
                 <th>רמת סיכון</th>
                 <th style={{ width: 120 }}></th>
               </tr>
@@ -338,6 +338,8 @@ export default function Dashboard() {
                     const key = `${row.product_id}-${forecastDays}`;
                     const gemini = geminiCache[key];
                     const loadingGemini = geminiLoading[key];
+                    const stored = row.analysis_explanation != null || row.analysis_analyzed_at != null;
+                    const displayAnalysis = gemini || (stored ? { risk: row.analysis_risk, explanation: row.analysis_explanation } : null);
                     const daysRisk = row.days_until_shortage != null && row.days_until_shortage <= RISK_DAYS_THRESHOLD;
                     return (
                       <tr key={row.product_id}>
@@ -346,11 +348,24 @@ export default function Dashboard() {
                         <td data-label="שימוש יומי">{row.has_sufficient_history ? Number(row.daily_avg_usage).toFixed(2) : '—'}</td>
                         <td data-label="ימים עד חוסר">{row.days_until_shortage != null ? row.days_until_shortage.toFixed(1) : (row.has_sufficient_history ? '—' : 'אין היסטוריה')}</td>
                         <td data-label="תאריך משוער">{row.estimated_shortage_date || '—'}</td>
-                        <td data-label="ניתוח Gemini">
-                          {gemini ? <span style={{ fontSize: '0.85rem' }}>{gemini.explanation}</span> : loadingGemini ? <span style={{ color: 'var(--text-muted)' }}>מנתח...</span> : <button type="button" className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }} onClick={() => fetchGemini(row)}>הצג ניתוח מלא</button>}
+                        <td data-label="ניתוח AI">
+                          {displayAnalysis ? (
+                            <span style={{ fontSize: '0.85rem' }}>
+                              {displayAnalysis.explanation}
+                              {row.analysis_analyzed_at && !gemini && (
+                                <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                                  עודכן ב־{new Date(row.analysis_analyzed_at).toLocaleDateString('he-IL')} {new Date(row.analysis_analyzed_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              )}
+                            </span>
+                          ) : loadingGemini ? (
+                            <span style={{ color: 'var(--text-muted)' }}>מנתח...</span>
+                          ) : (
+                            <button type="button" className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }} onClick={() => fetchGemini(row)}>הצג ניתוח מלא</button>
+                          )}
                         </td>
                         <td data-label="סיכון">
-                          {gemini ? <span className={`badge badge-${riskColor(gemini.risk)}`}>{gemini.risk}</span> : daysRisk ? <span className="badge badge-warning">בסיכון</span> : '—'}
+                          {displayAnalysis ? <span className={`badge badge-${riskColor(displayAnalysis.risk)}`}>{displayAnalysis.risk}</span> : daysRisk ? <span className="badge badge-warning">בסיכון</span> : '—'}
                         </td>
                         <td data-label="">
                           <button type="button" className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }} onClick={() => addToShoppingList(row.product_id)}>הוסף לרשימת קנייה</button>

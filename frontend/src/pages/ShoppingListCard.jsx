@@ -5,6 +5,16 @@ import UnitSelector from '../components/UnitSelector';
 
 const STATUS_LABELS = { draft: 'טיוטה', approved: 'מאושרת', completed: 'בוצעה' };
 
+function formatDateDDMMYYYY(d) {
+  if (!d) return '';
+  const date = typeof d === 'string' ? new Date(d + (d.length === 10 ? 'T12:00:00' : '')) : new Date(d);
+  if (Number.isNaN(date.getTime())) return String(d);
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
 export default function ShoppingListCard() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -155,6 +165,24 @@ export default function ShoppingListCard() {
         load();
       })
       .catch((e) => alert(e.message));
+  };
+
+  const getMessageTextForCopy = () => {
+    const dateStr = formatDateDDMMYYYY(list?.list_date);
+    const lines = [
+      `פקודת רכש מס' ${list?.order_number ?? ''}`,
+      `תאריך: ${dateStr}`,
+      list?.name ? `שם: ${list.name}` : '',
+      '',
+      'רשימת מוצרים:',
+      ...(items || []).map((i) => `- ${i.product_name || 'מוצר'}: ${Number(i.quantity)} ${i.unit_of_measure || "יח'"}`),
+    ].filter(Boolean);
+    return lines.join('\n');
+  };
+
+  const copyMessageToClipboard = () => {
+    const text = getMessageTextForCopy();
+    navigator.clipboard.writeText(text).then(() => alert('הטקסט הועתק ללוח – ניתן להדביק בווטסאפ')).catch(() => alert('ההעתקה נכשלה'));
   };
 
   const openSupplierModal = (item) => {
@@ -456,9 +484,14 @@ export default function ShoppingListCard() {
               </select>
             </div>
             {!emailDraft ? (
-              <button type="button" className="btn btn-primary" onClick={fetchDraftEmail} disabled={!emailSupplierId || emailDraftLoading}>
-                {emailDraftLoading ? 'מנסח...' : 'נסח מייל (AI)'}
-              </button>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+                <button type="button" className="btn btn-primary" onClick={fetchDraftEmail} disabled={!emailSupplierId || emailDraftLoading}>
+                  {emailDraftLoading ? 'מנסח...' : 'נסח מייל (AI)'}
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={copyMessageToClipboard}>
+                  העתק טקסט להודעה
+                </button>
+              </div>
             ) : (
               <>
                 <div className="form-group">
@@ -475,6 +508,7 @@ export default function ShoppingListCard() {
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '1rem' }}>
                   <button type="button" className="btn btn-primary" onClick={openMailto}>פתח במייל</button>
+                  <button type="button" className="btn btn-secondary" onClick={copyMessageToClipboard}>העתק טקסט להודעה</button>
                   <button type="button" className="btn btn-secondary" onClick={markEmailSent}>סומן כנשלח</button>
                   <button type="button" className="btn btn-secondary" onClick={() => setEmailDraft(null)}>נסח מחדש</button>
                   <button type="button" className="btn btn-secondary" onClick={() => setEmailModal(false)}>ביטול</button>

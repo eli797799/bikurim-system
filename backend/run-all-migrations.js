@@ -16,9 +16,12 @@ dotenv.config({ path: path.join(projectRoot, '.env') });
 
 const migrations = [
   'migration_warehouses.sql',
+  'migration_purchase_order_status.sql',
+  'migration_add_order_number.sql',
   'migration_inventory_multiple_warehouses.sql',
   'migration_receipt_discrepancy_alerts.sql',
-  'migration_shopping_list_email_sent.sql',
+  'migration_add_email_sent_at.sql',
+  'migration_forecast_analysis.sql',
 ];
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });

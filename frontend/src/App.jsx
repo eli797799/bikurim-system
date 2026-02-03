@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { Routes, Route, NavLink } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import Suppliers from './pages/Suppliers';
@@ -16,6 +17,33 @@ import { useLocation } from 'react-router-dom';
 function App() {
   const location = useLocation();
   const isWorkerPage = location.pathname.startsWith('/warehouse/') && !location.pathname.startsWith('/warehouses/');
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [isInstalled, setIsInstalled] = useState(false);
+
+  useEffect(() => {
+    const standalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      window.navigator.standalone === true ||
+      (typeof document.referrer === 'string' && document.referrer.includes('android-app://'));
+    setIsInstalled(standalone);
+  }, []);
+
+  useEffect(() => {
+    const onBeforeInstall = (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', onBeforeInstall);
+    return () => window.removeEventListener('beforeinstallprompt', onBeforeInstall);
+  }, []);
+
+  const handleInstall = () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    installPrompt.userChoice.then(({ outcome }) => {
+      if (outcome === 'accepted') setInstallPrompt(null);
+    });
+  };
 
   return (
     <div className="app-layout">
@@ -45,6 +73,11 @@ function App() {
             <NavLink to="/scan-delivery-note" className={({ isActive }) => (isActive ? 'active' : '')}>
               סריקת תעודה
             </NavLink>
+            {installPrompt && !isInstalled && (
+              <button type="button" className="pwa-install-btn" onClick={handleInstall} aria-label="התקן אפליקציה">
+                התקן אפליקציה
+              </button>
+            )}
           </nav>
         </aside>
         <main className="main">
