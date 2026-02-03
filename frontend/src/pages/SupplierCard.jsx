@@ -1,17 +1,19 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useLocation, Link } from 'react-router-dom';
 import { api } from '../api';
 import UnitSelector, { UNIT_OPTIONS } from '../components/UnitSelector';
 
 export default function SupplierCard() {
   const { id } = useParams();
+  const location = useLocation();
+  const fromCreate = location.state?.fromCreate === true;
   const [supplier, setSupplier] = useState(null);
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [edit, setEdit] = useState(false);
   const [form, setForm] = useState({});
-  const [addProduct, setAddProduct] = useState(false);
+  const [addProduct, setAddProduct] = useState(fromCreate);
   const [newProduct, setNewProduct] = useState({ product_id: '', price_per_unit: '', unit_of_measure: UNIT_OPTIONS[0], internal_code: '', min_order_quantity: '' });
 
   useEffect(() => {
@@ -139,6 +141,11 @@ export default function SupplierCard() {
         )}
       </div>
       <h2 style={{ marginTop: '1.5rem', marginBottom: '0.75rem' }}>טבלת מוצרים של הספק</h2>
+      {fromCreate && (
+        <p style={{ marginBottom: '1rem', padding: '0.75rem', background: 'var(--bg)', borderRadius: 'var(--radius)', color: 'var(--text)' }}>
+          ספק נוצר. הוסף כאן את המוצרים שיש לספק (מחיר, יחידה, קוד פנימי).
+        </p>
+      )}
       <div className="card">
         <button type="button" className="btn btn-primary" onClick={() => setAddProduct(!addProduct)} style={{ marginBottom: '1rem' }}>
           {addProduct ? 'ביטול' : 'הוספת מוצר מהמאגר'}
@@ -197,7 +204,16 @@ function AddProductForm({ newProduct, setNewProduct, onSubmit, onCancel }) {
     <form onSubmit={onSubmit} style={{ marginBottom: '1rem', padding: '1rem', background: 'var(--bg)', borderRadius: 'var(--radius)' }}>
       <div className="form-group">
         <label>מוצר מהמאגר *</label>
-        <select value={newProduct.product_id} onChange={(e) => setNewProduct((f) => ({ ...f, product_id: e.target.value }))} required>
+        <select
+          value={newProduct.product_id}
+          onChange={(e) => {
+            const productId = e.target.value;
+            const product = productOptions.find((p) => String(p.id) === productId);
+            const defaultUnit = product?.default_unit || UNIT_OPTIONS[0];
+            setNewProduct((f) => ({ ...f, product_id: productId, unit_of_measure: defaultUnit }));
+          }}
+          required
+        >
           <option value="">בחר מוצר</option>
           {productOptions.map((p) => (
             <option key={p.id} value={p.id}>{p.name} {p.code ? `(${p.code})` : ''}</option>
@@ -206,7 +222,7 @@ function AddProductForm({ newProduct, setNewProduct, onSubmit, onCancel }) {
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', maxWidth: 500 }}>
         <div className="form-group">
-          <label>מחיר ליחידה *</label>
+          <label>{newProduct.unit_of_measure ? `מחיר ל${newProduct.unit_of_measure} *` : 'מחיר ליחידה *'}</label>
           <input type="number" step="0.01" min="0" value={newProduct.price_per_unit} onChange={(e) => setNewProduct((f) => ({ ...f, price_per_unit: e.target.value }))} required />
         </div>
         <div className="form-group">

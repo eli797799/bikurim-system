@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 
 export default function Suppliers() {
@@ -20,13 +20,16 @@ export default function Suppliers() {
 
   useEffect(load, [q, status]);
 
+  const navigate = useNavigate();
+
   const submit = (e) => {
     e.preventDefault();
     api.suppliers.create(form)
-      .then(() => {
+      .then((data) => {
         setShowForm(false);
         setForm({ name: '', tax_id: '', contact_person: '', phone: '', email: '', address: '', payment_terms: '', notes: '', status: 'active' });
         load();
+        navigate(`/suppliers/${data.id}`, { state: { fromCreate: true } });
       })
       .catch((e) => alert(e.message));
   };
