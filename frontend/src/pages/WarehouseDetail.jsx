@@ -30,6 +30,9 @@ export default function WarehouseDetail() {
   const [scannedItems, setScannedItems] = useState([]);
   const [scanSaving, setScanSaving] = useState(false);
   const scanFileInputRef = useRef(null);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+  const [inventorySearch, setInventorySearch] = useState('');
+  const [inventorySort, setInventorySort] = useState('name');
 
   const load = () => {
     setLoading(true);
@@ -54,6 +57,20 @@ export default function WarehouseDetail() {
     api.products.list({}).then(setProducts).catch(() => []);
     api.suppliers.list({}).then(setSuppliers).catch(() => []);
   }, []);
+  useEffect(() => {
+    if (!isWorkerView) return;
+    const t = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(t);
+  }, [isWorkerView]);
+
+  const filteredInventory = inventory
+    .filter((row) => !inventorySearch.trim() || (row.product_name || '').toLowerCase().includes(inventorySearch.toLowerCase()) || (row.product_code || '').toLowerCase().includes(inventorySearch.toLowerCase()))
+    .slice()
+    .sort((a, b) => {
+      if (inventorySort === 'name') return (a.product_name || '').localeCompare(b.product_name || '', 'he');
+      if (inventorySort === 'quantity') return Number(a.quantity) - Number(b.quantity);
+      return 0;
+    });
 
   const openReceiveModal = () => {
     setReceiveSubMode(null);
@@ -67,13 +84,14 @@ export default function WarehouseDetail() {
   const handleReceive = (e) => {
     e.preventDefault();
     if (!receiveForm.product_id || !receiveForm.quantity || Number(receiveForm.quantity) <= 0) return alert('נא לבחור מוצר ולהזין כמות');
+    const date = isWorkerView ? new Date().toISOString().slice(0, 10) : receiveForm.movement_date;
     api.warehouses.createMovement(id, {
       movement_type: 'in',
       product_id: Number(receiveForm.product_id),
       quantity: Number(receiveForm.quantity),
-      movement_date: receiveForm.movement_date,
-      source_type: receiveForm.source_type,
-      reference_id: receiveForm.reference_id ? Number(receiveForm.reference_id) : null,
+      movement_date: date,
+      source_type: isWorkerView ? 'other' : receiveForm.source_type,
+      reference_id: isWorkerView ? null : (receiveForm.reference_id ? Number(receiveForm.reference_id) : null),
       note: receiveForm.note || null,
     })
       .then(() => {
@@ -162,11 +180,12 @@ export default function WarehouseDetail() {
     const available = item ? Number(item.quantity) : 0;
     const qty = Number(issueForm.quantity);
     if (available < qty) return alert(`כמות במלאי (${available}) קטנה מהמבוקשת (${qty}). לא ניתן לבצע יציאה.`);
+    const issueDate = isWorkerView ? new Date().toISOString().slice(0, 10) : issueForm.movement_date;
     api.warehouses.createMovement(id, {
       movement_type: 'out',
       product_id: Number(issueForm.product_id),
       quantity: qty,
-      movement_date: issueForm.movement_date,
+      movement_date: issueDate,
       destination: issueForm.destination || null,
       note: issueForm.note || null,
     })
@@ -199,20 +218,22 @@ export default function WarehouseDetail() {
           <Link to="/warehouses">← חזרה למחסנים</Link>
         </div>
       )}
-      <div className="card" style={{ marginBottom: '1rem' }}>
+      <div className={`card ${isWorkerView ? 'worker-header-card' : ''}`} style={{ marginBottom: '1rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
           <div>
             <h1 className="page-title" style={{ margin: 0 }}>{warehouse.name}</h1>
-            {warehouse.code && <span style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}>קוד: {warehouse.code}</span>}
-            {warehouse.location && <p style={{ margin: '0.25rem 0 0', fontSize: '0.9rem' }}>מיקום: {warehouse.location}</p>}
-            {warehouse.responsible_user_name && <p style={{ margin: '0.25rem 0 0', fontSize: '0.9rem' }}>מחסנאי אחראי: {warehouse.responsible_user_name}</p>}
+            {isWorkerView && warehouse.responsible_user_name && <p style={{ margin: '0.25rem 0 0', fontSize: '1rem' }}>מחסנאי: {warehouse.responsible_user_name}</p>}
+            {isWorkerView && <p style={{ margin: '0.25rem 0 0', fontSize: '0.95rem', color: 'var(--text-muted)' }}>{currentTime.toLocaleDateString('he-IL', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} · {currentTime.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</p>}
+            {!isWorkerView && warehouse.code && <span style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}>קוד: {warehouse.code}</span>}
+            {!isWorkerView && warehouse.location && <p style={{ margin: '0.25rem 0 0', fontSize: '0.9rem' }}>מיקום: {warehouse.location}</p>}
+            {!isWorkerView && warehouse.responsible_user_name && <p style={{ margin: '0.25rem 0 0', fontSize: '0.9rem' }}>מחסנאי אחראי: {warehouse.responsible_user_name}</p>}
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <button type="button" className="btn btn-primary" style={isWorkerView ? { padding: '0.75rem 1.25rem', fontSize: '1.05rem' } : {}} onClick={openReceiveModal}>
-              קיבלתי משלוח
+            <button type="button" className="btn btn-primary" style={isWorkerView ? { padding: '0.85rem 1.5rem', fontSize: '1.1rem', minHeight: 48 } : {}} onClick={openReceiveModal}>
+              ➕ קיבלתי משלוח
             </button>
-            <button type="button" className="btn btn-secondary" style={isWorkerView ? { padding: '0.75rem 1.25rem', fontSize: '1.05rem' } : {}} onClick={() => setIssueModal(true)}>
-              הוצאתי סחורה
+            <button type="button" className="btn btn-secondary" style={isWorkerView ? { padding: '0.85rem 1.5rem', fontSize: '1.1rem', minHeight: 48 } : {}} onClick={() => setIssueModal(true)}>
+              ➖ הוצאתי סחורה
             </button>
           </div>
         </div>
@@ -227,14 +248,25 @@ export default function WarehouseDetail() {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-        <button type="button" className={`btn ${tab === 'inventory' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('inventory')}>מלאי</button>
-        <button type="button" className={`btn ${tab === 'movements' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('movements')}>יומן תנועות</button>
-      </div>
+      {!isWorkerView && (
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+          <button type="button" className={`btn ${tab === 'inventory' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('inventory')}>מלאי</button>
+          <button type="button" className={`btn ${tab === 'movements' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('movements')}>יומן תנועות</button>
+        </div>
+      )}
 
       {tab === 'inventory' && (
         <div className="card">
           <h3 style={{ margin: '0 0 0.75rem' }}>מלאי במחסן</h3>
+          {isWorkerView && (
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem', alignItems: 'center' }}>
+              <input type="search" placeholder="חיפוש מוצר" value={inventorySearch} onChange={(e) => setInventorySearch(e.target.value)} style={{ padding: '0.5rem 0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', minWidth: 160 }} />
+              <select value={inventorySort} onChange={(e) => setInventorySort(e.target.value)} style={{ padding: '0.5rem 0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+                <option value="name">מיון לפי שם</option>
+                <option value="quantity">מיון לפי כמות</option>
+              </select>
+            </div>
+          )}
           {inventory.length === 0 ? (
             <p className="empty-state">אין עדיין מלאי במחסן. בצע "קיבלתי משלוח" כדי להוסיף.</p>
           ) : (
@@ -245,34 +277,41 @@ export default function WarehouseDetail() {
                     <th>מוצר</th>
                     <th>כמות נוכחית</th>
                     <th>יחידה</th>
-                    <th>כמות מינימום (התראה)</th>
-                    <th>תאריך עדכון אחרון</th>
+                    {isWorkerView ? <th>סטטוס</th> : <><th>כמות מינימום (התראה)</th><th>תאריך עדכון אחרון</th></>}
                   </tr>
                 </thead>
                 <tbody>
-                  {inventory.map((row) => (
+                  {(isWorkerView ? filteredInventory : inventory).map((row) => (
                     <tr key={row.product_id} className={row.is_low_stock ? 'low-stock-row' : ''}>
                       <td data-label="מוצר">
                         <strong>{row.product_name}</strong>
-                        {row.product_code && <span style={{ color: 'var(--text-muted)', marginRight: 4 }}>({row.product_code})</span>}
-                        {row.is_low_stock && <span className="badge badge-warning" style={{ marginRight: 4 }}>חוסר</span>}
+                        {!isWorkerView && row.product_code && <span style={{ color: 'var(--text-muted)', marginRight: 4 }}>({row.product_code})</span>}
+                        {!isWorkerView && row.is_low_stock && <span className="badge badge-warning" style={{ marginRight: 4 }}>חוסר</span>}
                       </td>
                       <td data-label="כמות נוכחית">{Number(row.quantity)}</td>
                       <td data-label="יחידה">{row.unit_of_measure}</td>
-                      <td data-label="כמות מינימום">
-                        {editingMin === row.product_id ? (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                            <input type="number" step="0.01" min="0" value={minQuantityVal} onChange={(e) => setMinQuantityVal(e.target.value)} style={{ width: 80, padding: '0.25rem' }} />
-                            <button type="button" className="btn btn-primary" style={{ padding: '0.2rem 0.5rem', fontSize: '0.85rem' }} onClick={() => saveMinQuantity(row.product_id)}>שמירה</button>
-                            <button type="button" className="btn btn-secondary" style={{ padding: '0.2rem 0.5rem', fontSize: '0.85rem' }} onClick={() => { setEditingMin(null); setMinQuantityVal(''); }}>ביטול</button>
-                          </span>
-                        ) : (
-                          <span onClick={() => startEditMin(row)} style={{ cursor: 'pointer', textDecoration: 'underline' }}>
-                            {row.min_quantity != null ? Number(row.min_quantity) : '—'}
-                          </span>
-                        )}
-                      </td>
-                      <td data-label="תאריך עדכון">{row.last_updated_at ? new Date(row.last_updated_at).toLocaleDateString('he-IL') : '—'}</td>
+                      {isWorkerView ? (
+                        <td data-label="סטטוס">
+                          <span className={`badge badge-${row.is_low_stock ? 'danger' : 'success'}`}>{row.is_low_stock ? 'נמוך' : 'תקין'}</span>
+                        </td>
+                      ) : (
+                        <>
+                          <td data-label="כמות מינימום">
+                            {editingMin === row.product_id ? (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                <input type="number" step="0.01" min="0" value={minQuantityVal} onChange={(e) => setMinQuantityVal(e.target.value)} style={{ width: 80, padding: '0.25rem' }} />
+                                <button type="button" className="btn btn-primary" style={{ padding: '0.2rem 0.5rem', fontSize: '0.85rem' }} onClick={() => saveMinQuantity(row.product_id)}>שמירה</button>
+                                <button type="button" className="btn btn-secondary" style={{ padding: '0.2rem 0.5rem', fontSize: '0.85rem' }} onClick={() => { setEditingMin(null); setMinQuantityVal(''); }}>ביטול</button>
+                              </span>
+                            ) : (
+                              <span onClick={() => startEditMin(row)} style={{ cursor: 'pointer', textDecoration: 'underline' }}>
+                                {row.min_quantity != null ? Number(row.min_quantity) : '—'}
+                              </span>
+                            )}
+                          </td>
+                          <td data-label="תאריך עדכון">{row.last_updated_at ? new Date(row.last_updated_at).toLocaleDateString('he-IL') : '—'}</td>
+                        </>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -332,15 +371,17 @@ export default function WarehouseDetail() {
 
             {receiveSubMode === null && (
               <>
-                <div style={{ marginBottom: '1rem' }}>
-                  <button type="button" className="btn btn-secondary" style={{ fontSize: '0.9rem' }} onClick={() => setReceiveSubMode('scan')}>
-                    סריקת תעודת משלוח
-                  </button>
-                </div>
+                {!isWorkerView && (
+                  <div style={{ marginBottom: '1rem' }}>
+                    <button type="button" className="btn btn-secondary" style={{ fontSize: '0.9rem' }} onClick={() => setReceiveSubMode('scan')}>
+                      סריקת תעודת משלוח
+                    </button>
+                  </div>
+                )}
                 <form onSubmit={handleReceive}>
                   <div className="form-group">
                     <label>מוצר *</label>
-                    <select value={receiveForm.product_id} onChange={(e) => setReceiveForm((f) => ({ ...f, product_id: e.target.value }))} required>
+                    <select value={receiveForm.product_id} onChange={(e) => setReceiveForm((f) => ({ ...f, product_id: e.target.value }))} required style={isWorkerView ? { minHeight: 48, fontSize: '1rem' } : {}}>
                       <option value="">בחר מוצר</option>
                       {products.map((p) => (
                         <option key={p.id} value={p.id}>{p.name} {p.code ? `(${p.code})` : ''}</option>
@@ -349,34 +390,40 @@ export default function WarehouseDetail() {
                   </div>
                   <div className="form-group">
                     <label>כמות שהתקבלה *</label>
-                    <input type="number" step="0.01" min="0.01" value={receiveForm.quantity} onChange={(e) => setReceiveForm((f) => ({ ...f, quantity: e.target.value }))} required />
+                    <input type="number" step="0.01" min="0.01" value={receiveForm.quantity} onChange={(e) => setReceiveForm((f) => ({ ...f, quantity: e.target.value }))} required style={isWorkerView ? { minHeight: 48, fontSize: '1rem' } : {}} />
                   </div>
-                  <div className="form-group">
-                    <label>תאריך קבלה</label>
-                    <input type="date" value={receiveForm.movement_date} onChange={(e) => setReceiveForm((f) => ({ ...f, movement_date: e.target.value }))} />
-                  </div>
-                  <div className="form-group">
-                    <label>מקור</label>
-                    <select value={receiveForm.source_type} onChange={(e) => setReceiveForm((f) => ({ ...f, source_type: e.target.value }))}>
-                      {SOURCE_TYPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                    </select>
-                  </div>
-                  {receiveForm.source_type === 'supplier' && (
+                  {!isWorkerView && (
                     <div className="form-group">
-                      <label>ספק (אופציונלי)</label>
-                      <select value={receiveForm.reference_id} onChange={(e) => setReceiveForm((f) => ({ ...f, reference_id: e.target.value }))}>
-                        <option value="">ללא</option>
-                        {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
+                      <label>תאריך קבלה</label>
+                      <input type="date" value={receiveForm.movement_date} onChange={(e) => setReceiveForm((f) => ({ ...f, movement_date: e.target.value }))} />
                     </div>
                   )}
+                  {!isWorkerView && (
+                    <>
+                      <div className="form-group">
+                        <label>מקור</label>
+                        <select value={receiveForm.source_type} onChange={(e) => setReceiveForm((f) => ({ ...f, source_type: e.target.value }))}>
+                          {SOURCE_TYPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                        </select>
+                      </div>
+                      {receiveForm.source_type === 'supplier' && (
+                        <div className="form-group">
+                          <label>ספק (אופציונלי)</label>
+                          <select value={receiveForm.reference_id} onChange={(e) => setReceiveForm((f) => ({ ...f, reference_id: e.target.value }))}>
+                            <option value="">ללא</option>
+                            {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                          </select>
+                        </div>
+                      )}
+                    </>
+                  )}
                   <div className="form-group">
-                    <label>הערה</label>
-                    <input value={receiveForm.note} onChange={(e) => setReceiveForm((f) => ({ ...f, note: e.target.value }))} placeholder="אופציונלי" />
+                    <label>הערה {isWorkerView && '(אופציונלי)'}</label>
+                    <input value={receiveForm.note} onChange={(e) => setReceiveForm((f) => ({ ...f, note: e.target.value }))} placeholder="אופציונלי" style={isWorkerView ? { minHeight: 48, fontSize: '1rem' } : {}} />
                   </div>
                   <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-                    <button type="submit" className="btn btn-primary">אישור – הוספה למלאי</button>
-                    <button type="button" className="btn btn-secondary" onClick={() => setReceiveModal(false)}>ביטול</button>
+                    <button type="submit" className="btn btn-primary" style={isWorkerView ? { minHeight: 48, fontSize: '1.05rem' } : {}}>אישור</button>
+                    <button type="button" className="btn btn-secondary" onClick={() => setReceiveModal(false)} style={isWorkerView ? { minHeight: 48 } : {}}>ביטול</button>
                   </div>
                 </form>
               </>
@@ -471,14 +518,14 @@ export default function WarehouseDetail() {
 
       {issueModal && (
         <div className="modal-overlay" onClick={() => setIssueModal(false)}>
-          <div className="modal-content card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
+          <div className="modal-content card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: isWorkerView ? 380 : 420 }}>
             <h3 style={{ margin: '0 0 1rem' }}>הוצאת סחורה (יציאה)</h3>
             <form onSubmit={handleIssue}>
               <div className="form-group">
                 <label>מוצר *</label>
-                <select value={issueForm.product_id} onChange={(e) => setIssueForm((f) => ({ ...f, product_id: e.target.value }))} required>
+                <select value={issueForm.product_id} onChange={(e) => setIssueForm((f) => ({ ...f, product_id: e.target.value }))} required style={isWorkerView ? { minHeight: 48, fontSize: '1rem' } : {}}>
                   <option value="">בחר מוצר</option>
-                  {inventory.filter((i) => Number(i.quantity) > 0).map((i) => (
+                  {(isWorkerView ? filteredInventory : inventory).filter((i) => Number(i.quantity) > 0).map((i) => (
                     <option key={i.product_id} value={i.product_id}>{i.product_name} (במלאי: {Number(i.quantity)} {i.unit_of_measure})</option>
                   ))}
                   {inventory.filter((i) => Number(i.quantity) > 0).length === 0 && <option value="" disabled>אין מוצרים במלאי</option>}
@@ -486,23 +533,25 @@ export default function WarehouseDetail() {
               </div>
               <div className="form-group">
                 <label>כמות שהוצאה *</label>
-                <input type="number" step="0.01" min="0.01" value={issueForm.quantity} onChange={(e) => setIssueForm((f) => ({ ...f, quantity: e.target.value }))} required />
+                <input type="number" step="0.01" min="0.01" value={issueForm.quantity} onChange={(e) => setIssueForm((f) => ({ ...f, quantity: e.target.value }))} required style={isWorkerView ? { minHeight: 48, fontSize: '1rem' } : {}} />
               </div>
+              {!isWorkerView && (
+                <div className="form-group">
+                  <label>תאריך</label>
+                  <input type="date" value={issueForm.movement_date} onChange={(e) => setIssueForm((f) => ({ ...f, movement_date: e.target.value }))} />
+                </div>
+              )}
               <div className="form-group">
-                <label>תאריך</label>
-                <input type="date" value={issueForm.movement_date} onChange={(e) => setIssueForm((f) => ({ ...f, movement_date: e.target.value }))} />
-              </div>
-              <div className="form-group">
-                <label>יעד (מפעל / ייצור / אחר)</label>
-                <input value={issueForm.destination} onChange={(e) => setIssueForm((f) => ({ ...f, destination: e.target.value }))} placeholder="אופציונלי" />
+                <label>יעד {isWorkerView && '(ייצור / אחר)'}</label>
+                <input value={issueForm.destination} onChange={(e) => setIssueForm((f) => ({ ...f, destination: e.target.value }))} placeholder="אופציונלי" style={isWorkerView ? { minHeight: 48, fontSize: '1rem' } : {}} />
               </div>
               <div className="form-group">
                 <label>הערה</label>
-                <input value={issueForm.note} onChange={(e) => setIssueForm((f) => ({ ...f, note: e.target.value }))} placeholder="אופציונלי" />
+                <input value={issueForm.note} onChange={(e) => setIssueForm((f) => ({ ...f, note: e.target.value }))} placeholder="אופציונלי" style={isWorkerView ? { minHeight: 48, fontSize: '1rem' } : {}} />
               </div>
               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-                <button type="submit" className="btn btn-primary">אישור – הורדה מהמלאי</button>
-                <button type="button" className="btn btn-secondary" onClick={() => setIssueModal(false)}>ביטול</button>
+                <button type="submit" className="btn btn-primary" style={isWorkerView ? { minHeight: 48, fontSize: '1.05rem' } : {}}>אישור</button>
+                <button type="button" className="btn btn-secondary" onClick={() => setIssueModal(false)} style={isWorkerView ? { minHeight: 48 } : {}}>ביטול</button>
               </div>
             </form>
           </div>

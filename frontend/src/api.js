@@ -81,4 +81,9 @@ export const api = {
         body: JSON.stringify({ image: imageBase64 }),
       }),
   },
+  dashboard: {
+    get: (params) => request('/api/dashboard' + buildQueryString(params)),
+    forecastGemini: (body) =>
+      request('/api/dashboard/forecast/gemini', { method: 'POST', body: JSON.stringify(body) }),
+  },
 };

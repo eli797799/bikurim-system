@@ -133,6 +133,20 @@ input, select, textarea {
   max-width: 100%;
 }
 
+.main--worker-full {
+  flex: 1;
+  padding: var(--space) 1rem;
+  overflow: auto;
+  max-width: 100%;
+  min-height: 100vh;
+}
+
+.worker-header-card .page-title { font-size: 1.35rem; }
+@media (max-width: 600px) {
+  .main--worker-full { padding: 0.75rem; }
+  .worker-header-card .page-title { font-size: 1.2rem; }
+}
+
 .page-title {
   margin: 0 0 1.75rem;
   font-size: 1.5rem;
@@ -261,6 +275,7 @@ tr:hover td {
 }
 
 .badge-success { background: #dcfce7; color: var(--success); }
+.badge-danger { background: #fee2e2; color: var(--danger); }
 .badge-warning { background: #fef9c3; color: #854d0e; }
 .badge-secondary { background: var(--border); color: var(--text-muted); }
 

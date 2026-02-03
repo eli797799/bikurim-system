@@ -67,6 +67,7 @@ export default function Warehouses() {
           <button type="button" className="btn btn-primary" onClick={() => { setEditingId(null); setForm(defaultForm); setShowForm(!showForm); }}>
             {showForm && !editingId ? 'ביטול' : 'מחסן חדש'}
           </button>
+          <Link to="/warehouses/links" className="btn btn-secondary">קישורים למחסנאים</Link>
           <Link to="/warehouses/alerts" className="btn btn-secondary">התראות חוסר מלאי</Link>
         </div>
         {showForm && (
