@@ -18,6 +18,9 @@ export default function ShoppingListCard() {
   const [newItem, setNewItem] = useState({ product_id: '', quantity: 1, unit_of_measure: '' });
   const [supplierModal, setSupplierModal] = useState(null);
   const [supplierOptions, setSupplierOptions] = useState([]);
+  const [warehouses, setWarehouses] = useState([]);
+  const [completeModal, setCompleteModal] = useState(false);
+  const [completeWarehouseId, setCompleteWarehouseId] = useState('');
 
   const load = () => {
     setLoading(true);
@@ -29,6 +32,7 @@ export default function ShoppingListCard() {
       .catch((e) => alert(e.message))
       .finally(() => setLoading(false));
     api.products.list({}).then(setProducts).catch(() => {});
+    api.warehouses.list({ is_active: 'true' }).then(setWarehouses).catch(() => []);
   };
 
   useEffect(load, [id]);
@@ -67,8 +71,22 @@ export default function ShoppingListCard() {
     api.shoppingLists.deleteItem(id, itemId).then(load).catch((e) => alert(e.message));
   };
 
-  const changeStatus = (newStatus) => {
-    api.shoppingLists.update(id, { status: newStatus })
+  const changeStatus = (newStatus, warehouseId) => {
+    const body = { status: newStatus };
+    if (warehouseId !== undefined && warehouseId !== '') body.warehouse_id = Number(warehouseId);
+    api.shoppingLists.update(id, body)
+      .then((data) => {
+        setList(data);
+        setCompleteModal(false);
+        setCompleteWarehouseId('');
+        load();
+      })
+      .catch((e) => alert(e.message));
+  };
+
+  const updateWarehouse = (warehouseId) => {
+    const val = warehouseId === '' ? null : Number(warehouseId);
+    api.shoppingLists.update(id, { warehouse_id: val })
       .then((data) => {
         setList(data);
         load();
@@ -119,6 +137,7 @@ export default function ShoppingListCard() {
           <h2>ביכורים תעשיות מזון בע"מ</h2>
           <div className="order-meta">
             <strong>פקודת רכש #{list.order_number}</strong> · {list.name} · תאריך: {list.list_date}
+            {list.warehouse_name && <span> · מחסן: {list.warehouse_name}</span>}
           </div>
         </div>
       </div>
@@ -132,6 +151,23 @@ export default function ShoppingListCard() {
           </span>
         </p>
         {list.notes && <p><strong>הערות:</strong> {list.notes}</p>}
+        <p>
+          <strong>מחסן:</strong>{' '}
+          {(canEdit || list.status === 'completed') && warehouses.length > 0 ? (
+            <select
+              value={list.warehouse_id ?? ''}
+              onChange={(e) => updateWarehouse(e.target.value)}
+              style={{ padding: '0.35rem 0.5rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}
+            >
+              <option value="">ללא מחסן</option>
+              {warehouses.map((w) => (
+                <option key={w.id} value={w.id}>{w.name}</option>
+              ))}
+            </select>
+          ) : (
+            list.warehouse_name || '—'
+          )}
+        </p>
         {canEdit && (
           <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             {list.status === 'draft' && (
@@ -141,7 +177,7 @@ export default function ShoppingListCard() {
               </>
             )}
             {list.status === 'approved' && (
-              <button type="button" className="btn btn-primary" onClick={() => changeStatus('completed')}>סימון כבוצעה</button>
+              <button type="button" className="btn btn-primary" onClick={() => setCompleteModal(true)}>סימון כבוצעה (הכל הוזמן)</button>
             )}
           </div>
         )}
@@ -302,6 +338,32 @@ export default function ShoppingListCard() {
               </div>
             ))
           )}
+        </div>
+      )}
+
+      {completeModal && (
+        <div className="modal-overlay" onClick={() => setCompleteModal(false)}>
+          <div className="modal-content card" onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 1rem' }}>סימון פקודה כבוצעה</h3>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>הפקודה תיסומן כבוצעה (הכל הוזמן). ניתן לבחור לאיזה מחסן הוזמנה ההזמנה.</p>
+            <div className="form-group">
+              <label>מחסן (אופציונלי)</label>
+              <select
+                value={completeWarehouseId}
+                onChange={(e) => setCompleteWarehouseId(e.target.value)}
+                style={{ width: '100%', padding: '0.5rem 0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}
+              >
+                <option value="">ללא מחסן</option>
+                {warehouses.map((w) => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+              <button type="button" className="btn btn-primary" onClick={() => changeStatus('completed', completeWarehouseId)}>אישור – סימון כבוצעה</button>
+              <button type="button" className="btn btn-secondary" onClick={() => setCompleteModal(false)}>ביטול</button>
+            </div>
+          </div>
         </div>
       )}
 

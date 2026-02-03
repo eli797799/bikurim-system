@@ -5,6 +5,9 @@ import Products from './pages/Products';
 import ProductCard from './pages/ProductCard';
 import ShoppingLists from './pages/ShoppingLists';
 import ShoppingListCard from './pages/ShoppingListCard';
+import Warehouses from './pages/Warehouses';
+import WarehouseDetail from './pages/WarehouseDetail';
+import WarehouseAlerts from './pages/WarehouseAlerts';
 import ScanDeliveryNote from './pages/ScanDeliveryNote';
 
 function App() {
@@ -23,6 +26,9 @@ function App() {
             <NavLink to="/products" className={({ isActive }) => (isActive ? 'active' : '')}>
               מוצרים
             </NavLink>
+            <NavLink to="/warehouses" className={({ isActive }) => (isActive ? 'active' : '')}>
+              מחסנים
+            </NavLink>
             <NavLink to="/shopping-lists" className={({ isActive }) => (isActive ? 'active' : '')}>
               פקודות רכש
             </NavLink>
@@ -38,6 +44,10 @@ function App() {
             <Route path="/suppliers/:id" element={<SupplierCard />} />
             <Route path="/products" element={<Products />} />
             <Route path="/products/:id" element={<ProductCard />} />
+            <Route path="/warehouses" element={<Warehouses />} />
+            <Route path="/warehouses/alerts" element={<WarehouseAlerts />} />
+            <Route path="/warehouses/:id" element={<WarehouseDetail />} />
+            <Route path="/warehouse/:id" element={<WarehouseDetail />} />
             <Route path="/shopping-lists" element={<ShoppingLists />} />
             <Route path="/shopping-lists/:id" element={<ShoppingListCard />} />
             <Route path="/scan-delivery-note" element={<ScanDeliveryNote />} />

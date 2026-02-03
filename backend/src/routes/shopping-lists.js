@@ -37,12 +37,16 @@ async function assertNotCompleted(shoppingListId) {
   return r.rows[0];
 }
 
-const listFields = 'id, order_number, name, list_date, notes, status, created_by, created_at, updated_at';
+const listFields = 'id, order_number, name, list_date, notes, status, warehouse_id, created_by, created_at, updated_at';
 
 router.get('/', async (req, res, next) => {
   try {
     const result = await query(
-      `SELECT ${listFields} FROM shopping_lists ORDER BY list_date DESC, order_number DESC`
+      `SELECT sl.id, sl.order_number, sl.name, sl.list_date, sl.notes, sl.status, sl.warehouse_id, sl.created_by, sl.created_at, sl.updated_at,
+              w.name AS warehouse_name
+       FROM shopping_lists sl
+       LEFT JOIN warehouses w ON w.id = sl.warehouse_id
+       ORDER BY sl.list_date DESC, sl.order_number DESC`
     );
     res.json(result.rows);
   } catch (err) {
@@ -53,7 +57,14 @@ router.get('/', async (req, res, next) => {
 router.get('/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
-    const list = await query(`SELECT ${listFields} FROM shopping_lists WHERE id = $1`, [id]);
+    const list = await query(
+      `SELECT sl.id, sl.order_number, sl.name, sl.list_date, sl.notes, sl.status, sl.warehouse_id, sl.created_by, sl.created_at, sl.updated_at,
+              w.name AS warehouse_name
+       FROM shopping_lists sl
+       LEFT JOIN warehouses w ON w.id = sl.warehouse_id
+       WHERE sl.id = $1`,
+      [id]
+    );
     if (list.rows.length === 0) return res.status(404).json({ error: 'פקודת רכש לא נמצאה' });
     const items = await query(
       `SELECT sli.id, sli.shopping_list_id, sli.product_id, sli.quantity, sli.unit_of_measure,
@@ -81,16 +92,18 @@ router.get('/:id', async (req, res, next) => {
 
 router.post('/', async (req, res, next) => {
   try {
-    const { name, list_date, notes } = req.body;
+    const { name, list_date, notes, warehouse_id } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'שם הפקודה חובה' });
     const date = list_date || new Date().toISOString().slice(0, 10);
     const result = await query(
-      `INSERT INTO shopping_lists (name, list_date, notes, status)
-       VALUES ($1, $2, $3, 'draft')
-       RETURNING ${listFields}`,
-      [name.trim(), date, notes || null]
+      `INSERT INTO shopping_lists (name, list_date, notes, status, warehouse_id)
+       VALUES ($1, $2, $3, 'draft', $4)
+       RETURNING id, order_number, name, list_date, notes, status, warehouse_id, created_by, created_at, updated_at`,
+      [name.trim(), date, notes || null, warehouse_id || null]
     );
-    res.status(201).json(result.rows[0]);
+    const row = result.rows[0];
+    const wh = row.warehouse_id ? await query('SELECT name FROM warehouses WHERE id = $1', [row.warehouse_id]) : { rows: [] };
+    res.status(201).json({ ...row, warehouse_name: wh.rows[0]?.name || null });
   } catch (err) {
     next(err);
   }
@@ -108,10 +121,10 @@ router.post('/:id/duplicate', async (req, res, next) => {
     const newName = (orig.rows[0].name || 'פקודה').trim() + ' (עותק)';
     const newDate = new Date().toISOString().slice(0, 10);
     const newList = await query(
-      `INSERT INTO shopping_lists (name, list_date, notes, status)
-       VALUES ($1, $2, $3, 'draft')
-       RETURNING ${listFields}`,
-      [newName, newDate, orig.rows[0].notes || null]
+      `INSERT INTO shopping_lists (name, list_date, notes, status, warehouse_id)
+       VALUES ($1, $2, $3, 'draft', $4)
+       RETURNING id, order_number, name, list_date, notes, status, warehouse_id, created_by, created_at, updated_at`,
+      [newName, newDate, orig.rows[0].notes || null, orig.rows[0].warehouse_id || null]
     );
     const newId = newList.rows[0].id;
     for (let i = 0; i < items.rows.length; i++) {
@@ -132,29 +145,48 @@ router.post('/:id/duplicate', async (req, res, next) => {
 router.patch('/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { name, list_date, notes, status } = req.body;
-    await assertNotCompleted(id);
+    const { name, list_date, notes, status, warehouse_id } = req.body;
+    const current = await query('SELECT id, status FROM shopping_lists WHERE id = $1', [id]);
+    if (current.rows.length === 0) throw Object.assign(new Error('פקודת רכש לא נמצאה'), { statusCode: 404 });
+    const isCompleted = current.rows[0].status === 'completed';
+    if (isCompleted) {
+      const allowedWhenCompleted = ['warehouse_id'];
+      const disallowed = [name !== undefined && 'name', list_date !== undefined && 'list_date', notes !== undefined && 'notes', status !== undefined && 'status'].filter(Boolean);
+      if (disallowed.length > 0) throw Object.assign(new Error('פקודה שבוצעה ניתנת רק לעדכון מחסן'), { statusCode: 403 });
+    } else {
+      if (name !== undefined || list_date !== undefined || notes !== undefined || status !== undefined || warehouse_id !== undefined) {
+        await assertNotCompleted(id);
+      }
+    }
     const sets = [];
     const params = [id];
     let i = 2;
-    if (name !== undefined) { sets.push(`name = $${i++}`); params.push(name); }
-    if (list_date !== undefined) { sets.push(`list_date = $${i++}`); params.push(list_date); }
-    if (notes !== undefined) { sets.push(`notes = $${i++}`); params.push(notes); }
-    if (status !== undefined) {
-      if (!['draft', 'approved', 'completed'].includes(status)) return res.status(400).json({ error: 'סטטוס לא תקין' });
-      sets.push(`status = $${i++}`);
-      params.push(status);
+    if (!isCompleted) {
+      if (name !== undefined) { sets.push(`name = $${i++}`); params.push(name); }
+      if (list_date !== undefined) { sets.push(`list_date = $${i++}`); params.push(list_date); }
+      if (notes !== undefined) { sets.push(`notes = $${i++}`); params.push(notes); }
+      if (status !== undefined) {
+        if (!['draft', 'approved', 'completed'].includes(status)) return res.status(400).json({ error: 'סטטוס לא תקין' });
+        sets.push(`status = $${i++}`);
+        params.push(status);
+      }
     }
+    if (warehouse_id !== undefined) { sets.push(`warehouse_id = $${i++}`); params.push(warehouse_id || null); }
     if (sets.length === 0) {
-      const curr = await query(`SELECT ${listFields} FROM shopping_lists WHERE id = $1`, [id]);
+      const curr = await query(
+        `SELECT sl.*, w.name AS warehouse_name FROM shopping_lists sl LEFT JOIN warehouses w ON w.id = sl.warehouse_id WHERE sl.id = $1`,
+        [id]
+      );
       return res.json(curr.rows[0]);
     }
     const result = await query(
-      `UPDATE shopping_lists SET ${sets.join(', ')} WHERE id = $1 RETURNING ${listFields}`,
+      `UPDATE shopping_lists SET ${sets.join(', ')} WHERE id = $1 RETURNING id, order_number, name, list_date, notes, status, warehouse_id, created_by, created_at, updated_at`,
       params
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'פקודת רכש לא נמצאה' });
-    res.json(result.rows[0]);
+    const row = result.rows[0];
+    const wh = row.warehouse_id ? await query('SELECT name FROM warehouses WHERE id = $1', [row.warehouse_id]) : { rows: [] };
+    res.json({ ...row, warehouse_name: wh.rows[0]?.name || null });
   } catch (err) {
     next(err);
   }
@@ -163,7 +195,6 @@ router.patch('/:id', async (req, res, next) => {
 router.delete('/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
-    await assertNotCompleted(id);
     const result = await query('DELETE FROM shopping_lists WHERE id = $1 RETURNING id', [id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'פקודת רכש לא נמצאה' });
     res.status(204).send();

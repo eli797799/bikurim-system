@@ -10,8 +10,9 @@ export default function ShoppingLists() {
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: '', list_date: new Date().toISOString().slice(0, 10), notes: '' });
+  const [form, setForm] = useState({ name: '', list_date: new Date().toISOString().slice(0, 10), notes: '', warehouse_id: '' });
   const [products, setProducts] = useState([]);
+  const [warehouses, setWarehouses] = useState([]);
   const [pendingItems, setPendingItems] = useState([]);
   const [newItem, setNewItem] = useState({ product_id: '', quantity: 1, unit_of_measure: '' });
 
@@ -26,7 +27,10 @@ export default function ShoppingLists() {
   useEffect(load, []);
 
   useEffect(() => {
-    if (showForm) api.products.list({}).then(setProducts).catch(() => {});
+    if (showForm) {
+      api.products.list({}).then(setProducts).catch(() => {});
+      api.warehouses.list({ is_active: 'true' }).then(setWarehouses).catch(() => []);
+    }
   }, [showForm]);
 
   const addPendingItem = (e) => {
@@ -52,7 +56,10 @@ export default function ShoppingLists() {
   const submit = async (e) => {
     e.preventDefault();
     try {
-      const newList = await api.shoppingLists.create(form);
+      const newList = await api.shoppingLists.create({
+        ...form,
+        warehouse_id: form.warehouse_id ? Number(form.warehouse_id) : undefined,
+      });
       for (const item of pendingItems) {
         await api.shoppingLists.addItem(newList.id, {
           product_id: item.product_id,
@@ -61,7 +68,7 @@ export default function ShoppingLists() {
         });
       }
       setShowForm(false);
-      setForm({ name: '', list_date: new Date().toISOString().slice(0, 10), notes: '' });
+      setForm({ name: '', list_date: new Date().toISOString().slice(0, 10), notes: '', warehouse_id: '' });
       setPendingItems([]);
       setNewItem({ product_id: '', quantity: 1, unit_of_measure: '' });
       navigate(`/shopping-lists/${newList.id}`);
@@ -75,6 +82,15 @@ export default function ShoppingLists() {
     e.stopPropagation();
     api.shoppingLists.duplicate(listId)
       .then((newList) => navigate(`/shopping-lists/${newList.id}`))
+      .catch((e) => alert(e.message));
+  };
+
+  const handleDelete = (e, row) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm(`למחוק את פקודת הרכש "${row.name}" (מס׳ ${row.order_number})?`)) return;
+    api.shoppingLists.delete(row.id)
+      .then(load)
       .catch((e) => alert(e.message));
   };
 
@@ -103,6 +119,15 @@ export default function ShoppingLists() {
             <div className="form-group">
               <label>הערות כלליות</label>
               <textarea value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} rows={2} />
+            </div>
+            <div className="form-group">
+              <label>מחסן (אופציונלי)</label>
+              <select value={form.warehouse_id} onChange={(e) => setForm((f) => ({ ...f, warehouse_id: e.target.value }))}>
+                <option value="">ללא מחסן</option>
+                {warehouses.map((w) => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
             </div>
 
             <h3 style={{ marginTop: '1.25rem', marginBottom: '0.5rem' }}>מוצרים לפקודה</h3>
@@ -173,6 +198,7 @@ export default function ShoppingLists() {
                   <th>שם הפקודה</th>
                   <th>תאריך</th>
                   <th>סטטוס</th>
+                  <th>מחסן</th>
                   <th>הערות</th>
                   <th></th>
                 </tr>
@@ -188,12 +214,14 @@ export default function ShoppingLists() {
                         {STATUS_LABELS[row.status] || row.status}
                       </span>
                     </td>
+                    <td data-label="מחסן">{row.warehouse_name || '—'}</td>
                     <td data-label="הערות">{row.notes ? row.notes.slice(0, 40) + (row.notes.length > 40 ? '…' : '') : '—'}</td>
                     <td data-label="">
                       <Link to={`/shopping-lists/${row.id}`}>לפתיחה</Link>
                       {row.status !== 'completed' && (
                         <button type="button" className="btn btn-secondary" style={{ marginRight: 8, padding: '0.25rem 0.5rem', fontSize: '0.85rem' }} onClick={(ev) => handleDuplicate(ev, row.id)}>שכפול</button>
                       )}
+                      <button type="button" className="btn btn-danger" style={{ marginRight: 8, padding: '0.25rem 0.5rem', fontSize: '0.85rem' }} onClick={(ev) => handleDelete(ev, row)}>מחיקה</button>
                     </td>
                   </tr>
                 ))}

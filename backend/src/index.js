@@ -8,6 +8,8 @@ import suppliersRouter from './routes/suppliers.js';
 import productsRouter from './routes/products.js';
 import categoriesRouter from './routes/categories.js';
 import shoppingListsRouter from './routes/shopping-lists.js';
+import warehousesRouter from './routes/warehouses.js';
+import usersRouter from './routes/users.js';
 import scanDeliveryNoteRouter from './routes/scan-delivery-note.js';
 import { errorHandler } from './middleware/error.js';
 
@@ -24,6 +26,8 @@ app.use('/api/suppliers', suppliersRouter);
 app.use('/api/products', productsRouter);
 app.use('/api/categories', categoriesRouter);
 app.use('/api/shopping-lists', shoppingListsRouter);
+app.use('/api/warehouses', warehousesRouter);
+app.use('/api/users', usersRouter);
 app.use('/api/scan-delivery-note', scanDeliveryNoteRouter);
 
 app.get('/api/health', (req, res) => {

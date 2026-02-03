@@ -58,6 +58,22 @@ export const api = {
     updateItem: (listId, itemId, body) => request(`/api/shopping-lists/${listId}/items/${itemId}`, { method: 'PATCH', body: JSON.stringify(body) }),
     deleteItem: (listId, itemId) => request(`/api/shopping-lists/${listId}/items/${itemId}`, { method: 'DELETE' }),
   },
+  users: {
+    list: () => request('/api/users'),
+  },
+  warehouses: {
+    list: (params) => request('/api/warehouses' + buildQueryString(params)),
+    get: (id) => request(`/api/warehouses/${id}`),
+    create: (body) => request('/api/warehouses', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id, body) => request(`/api/warehouses/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    delete: (id) => request(`/api/warehouses/${id}`, { method: 'DELETE' }),
+    getInventory: (id) => request(`/api/warehouses/${id}/inventory`),
+    updateInventoryMin: (warehouseId, productId, body) => request(`/api/warehouses/${warehouseId}/inventory/${productId}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    getMovements: (id) => request(`/api/warehouses/${id}/movements`),
+    createMovement: (warehouseId, body) => request(`/api/warehouses/${warehouseId}/movements`, { method: 'POST', body: JSON.stringify(body) }),
+    getAlerts: () => request('/api/warehouses/alerts'),
+    getAlertsByWarehouse: (id) => request(`/api/warehouses/${id}/alerts`),
+  },
   scanDeliveryNote: {
     analyze: (imageBase64) =>
       request('/api/scan-delivery-note', {
