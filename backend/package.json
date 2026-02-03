@@ -1,0 +1,22 @@
+{
+  "name": "bikurim-backend",
+  "version": "1.0.0",
+  "description": "Backend API – מערכת קניין ורשימות קנייה לביכורים",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "migrate:status": "node run-migration-status.js",
+    "reset-pilot": "node run-reset-pilot.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "pg": "^8.12.0"
+  }
+}

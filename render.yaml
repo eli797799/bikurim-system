@@ -1,0 +1,19 @@
+# Render.com – פריסת Backend
+# העלה קובץ זה ל-Render: New → Blueprint → גרור את render.yaml
+# הגדר DATABASE_URL ב-Environment Variables
+
+services:
+  - type: web
+    name: bikurim-api
+    runtime: node
+    region: frankfurt
+    plan: free
+
+    buildCommand: cd backend && npm install
+    startCommand: cd backend && npm start
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
