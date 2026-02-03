@@ -248,6 +248,146 @@ router.post('/:id/movements', async (req, res, next) => {
   }
 });
 
+// ---- צפי משלוחים למחסן (פקודות מאושרות שמיועדות למחסן) ----
+router.get('/:id/expected-deliveries', async (req, res, next) => {
+  try {
+    const warehouse_id = req.params.id;
+    await getWarehouseOr404(warehouse_id);
+    const lists = await query(
+      `SELECT sl.id, sl.order_number, sl.name, sl.list_date, sl.status
+       FROM shopping_lists sl
+       WHERE sl.warehouse_id = $1 AND sl.status = 'approved'
+       ORDER BY sl.list_date DESC, sl.order_number DESC`,
+      [warehouse_id]
+    );
+    const result = [];
+    for (const row of lists.rows) {
+      const items = await query(
+        `SELECT sli.product_id, sli.quantity, sli.unit_of_measure, p.name AS product_name, p.code AS product_code
+         FROM shopping_list_items sli
+         JOIN products p ON p.id = sli.product_id
+         WHERE sli.shopping_list_id = $1 ORDER BY sli.sort_order, sli.id`,
+        [row.id]
+      );
+      result.push({ ...row, items: items.rows });
+    }
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---- קבלת משלוח מפקודת רכש (יצירת תנועות + השוואה והתראה לקניין אם יש חוסר התאמה) ----
+router.post('/:id/receive-from-order', async (req, res, next) => {
+  try {
+    const warehouse_id = req.params.id;
+    const { shopping_list_id, movement_date, items } = req.body;
+    if (!shopping_list_id || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'נדרשים shopping_list_id ו-items (מערך פריטים עם product_id, quantity, unit_of_measure)' });
+    }
+    await getWarehouseOr404(warehouse_id);
+    const listRes = await query(
+      'SELECT id, order_number, name, warehouse_id FROM shopping_lists WHERE id = $1',
+      [shopping_list_id]
+    );
+    if (listRes.rows.length === 0) return res.status(404).json({ error: 'פקודת רכש לא נמצאה' });
+    const list = listRes.rows[0];
+    if (Number(list.warehouse_id) !== Number(warehouse_id)) {
+      return res.status(400).json({ error: 'פקודת הרכש לא מיועדת למחסן זה' });
+    }
+    const orderItems = await query(
+      `SELECT sli.product_id, sli.quantity, sli.unit_of_measure, p.name AS product_name
+       FROM shopping_list_items sli JOIN products p ON p.id = sli.product_id
+       WHERE sli.shopping_list_id = $1 ORDER BY sli.id`,
+      [shopping_list_id]
+    );
+    const date = movement_date || new Date().toISOString().slice(0, 10);
+    const receivedByProduct = {};
+    for (const it of items) {
+      const pid = Number(it.product_id);
+      const qty = Number(it.quantity);
+      if (!pid || qty <= 0) continue;
+      const prod = await query('SELECT id, name, default_unit FROM products WHERE id = $1', [pid]);
+      if (prod.rows.length === 0) continue;
+      const unit = (it.unit_of_measure || prod.rows[0].default_unit || "יח'").trim() || "יח'";
+      receivedByProduct[pid] = { quantity: qty, unit, product_name: prod.rows[0].name };
+      const inv = await query(
+        'SELECT id, quantity, unit_of_measure FROM warehouse_inventory WHERE warehouse_id = $1 AND product_id = $2',
+        [warehouse_id, pid]
+      );
+      if (inv.rows.length === 0) {
+        await query(
+          `INSERT INTO warehouse_inventory (warehouse_id, product_id, quantity, unit_of_measure, min_quantity) VALUES ($1, $2, $3, $4, NULL)`,
+          [warehouse_id, pid, qty, unit]
+        );
+      } else {
+        await query(
+          'UPDATE warehouse_inventory SET quantity = quantity + $3, last_updated_at = NOW(), updated_at = NOW() WHERE warehouse_id = $1 AND product_id = $2',
+          [warehouse_id, pid, qty]
+        );
+      }
+      await query(
+        `INSERT INTO inventory_movements (warehouse_id, product_id, movement_type, quantity, unit_of_measure, movement_date, user_id, source_type, reference_id, destination, note)
+         VALUES ($1, $2, 'in', $3, $4, $5, NULL, 'supplier', $6, NULL, 'קבלה מפקודת רכש #' || $7)`,
+        [warehouse_id, pid, qty, unit, date, shopping_list_id, list.order_number]
+      );
+    }
+    const orderedByProduct = {};
+    for (const o of orderItems.rows) {
+      orderedByProduct[o.product_id] = { quantity: Number(o.quantity), unit: o.unit_of_measure, product_name: o.product_name };
+    }
+    const differences = [];
+    for (const [pid, ord] of Object.entries(orderedByProduct)) {
+      const rec = receivedByProduct[pid];
+      const ordered_qty = ord.quantity;
+      const received_qty = rec ? rec.quantity : 0;
+      if (received_qty !== ordered_qty) {
+        differences.push({
+          product_id: Number(pid),
+          product_name: ord.product_name,
+          ordered_qty,
+          received_qty,
+          unit: ord.unit,
+          type: received_qty < ordered_qty ? 'short' : 'over',
+        });
+      }
+    }
+    for (const [pid, rec] of Object.entries(receivedByProduct)) {
+      if (!orderedByProduct[pid]) {
+        differences.push({
+          product_id: Number(pid),
+          product_name: rec.product_name,
+          ordered_qty: 0,
+          received_qty: rec.quantity,
+          unit: rec.unit,
+          type: 'extra',
+        });
+      }
+    }
+    let discrepancyAlert = null;
+    if (differences.length > 0) {
+      const wh = await query('SELECT name FROM warehouses WHERE id = $1', [warehouse_id]);
+      const ins = await query(
+        `INSERT INTO receipt_discrepancy_alerts (warehouse_id, shopping_list_id, warehouse_name, order_number, list_name, details, read_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NULL)
+         RETURNING id, warehouse_id, shopping_list_id, warehouse_name, order_number, list_name, details, read_at, created_at`,
+        [
+          warehouse_id,
+          shopping_list_id,
+          wh.rows[0]?.name || null,
+          list.order_number,
+          list.name,
+          JSON.stringify({ movement_date: date, differences, ordered: orderItems.rows.map((o) => ({ product_id: o.product_id, product_name: o.product_name, quantity: Number(o.quantity), unit: o.unit_of_measure })), received: items }),
+        ]
+      );
+      discrepancyAlert = ins.rows[0];
+    }
+    res.status(201).json({ success: true, discrepancy_alert: discrepancyAlert });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ---- התראות מחסן בודד ----
 router.get('/:id/alerts', async (req, res, next) => {
   try {

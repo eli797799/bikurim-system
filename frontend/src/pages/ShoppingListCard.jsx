@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../api';
 import UnitSelector from '../components/UnitSelector';
 
@@ -21,6 +21,10 @@ export default function ShoppingListCard() {
   const [warehouses, setWarehouses] = useState([]);
   const [completeModal, setCompleteModal] = useState(false);
   const [completeWarehouseId, setCompleteWarehouseId] = useState('');
+  const [emailModal, setEmailModal] = useState(false);
+  const [emailSupplierId, setEmailSupplierId] = useState('');
+  const [emailDraft, setEmailDraft] = useState(null);
+  const [emailDraftLoading, setEmailDraftLoading] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -46,6 +50,19 @@ export default function ShoppingListCard() {
   useEffect(() => {
     if (viewMode === 'by-supplier' && id) loadBySupplier();
   }, [viewMode, id]);
+
+  const location = useLocation();
+  useEffect(() => {
+    if (location.state?.openEmailModal && list && items.some((i) => i.selected_supplier_id)) {
+      setEmailModal(true);
+      const sups = items.filter((i) => i.selected_supplier_id).reduce((acc, i) => {
+        if (!acc.find((s) => s.id === i.selected_supplier_id)) acc.push({ id: i.selected_supplier_id, name: i.supplier_name, email: i.supplier_email });
+        return acc;
+      }, []);
+      setEmailSupplierId(sups.length === 1 ? String(sups[0].id) : '');
+      setEmailDraft(null);
+    }
+  }, [location.state?.openEmailModal, list?.id, items.length]);
 
   const isLocked = list?.status === 'completed';
   const canEdit = !isLocked;
@@ -94,6 +111,52 @@ export default function ShoppingListCard() {
       .catch((e) => alert(e.message));
   };
 
+  const suppliersInOrder = items
+    .filter((i) => i.selected_supplier_id)
+    .reduce((acc, i) => {
+      if (!acc.find((s) => s.id === i.selected_supplier_id)) {
+        acc.push({
+          id: i.selected_supplier_id,
+          name: i.supplier_name || 'ספק',
+          email: i.supplier_email || '',
+        });
+      }
+      return acc;
+    }, []);
+
+  const openEmailModal = () => {
+    setEmailModal(true);
+    setEmailSupplierId(suppliersInOrder.length === 1 ? String(suppliersInOrder[0].id) : '');
+    setEmailDraft(null);
+  };
+
+  const fetchDraftEmail = () => {
+    if (!emailSupplierId) return alert('נא לבחור ספק');
+    setEmailDraftLoading(true);
+    api.shoppingLists.draftEmail(id, { supplier_id: Number(emailSupplierId) })
+      .then((draft) => setEmailDraft(draft))
+      .catch((e) => alert(e.message))
+      .finally(() => setEmailDraftLoading(false));
+  };
+
+  const openMailto = () => {
+    if (!emailDraft?.to) return alert('חסר כתובת מייל לספק');
+    const subject = encodeURIComponent(emailDraft.subject || '');
+    const body = encodeURIComponent((emailDraft.body || '').replace(/\n/g, '%0D%0A'));
+    window.location.href = `mailto:${emailDraft.to}?subject=${subject}&body=${body}`;
+  };
+
+  const markEmailSent = () => {
+    api.shoppingLists.update(id, { email_sent_at: new Date().toISOString() })
+      .then((data) => {
+        setList(data);
+        setEmailModal(false);
+        setEmailDraft(null);
+        load();
+      })
+      .catch((e) => alert(e.message));
+  };
+
   const openSupplierModal = (item) => {
     api.shoppingLists.getSuppliersForProduct(id, item.product_id)
       .then((suppliers) => {
@@ -135,9 +198,11 @@ export default function ShoppingListCard() {
         <img src="/bikurim-logo.png" alt="ביכורים" />
         <div className="purchase-order-header-info" style={{ flex: 1 }}>
           <h2>ביכורים תעשיות מזון בע"מ</h2>
+          <p style={{ margin: '0.25rem 0 0', fontSize: '1rem', fontWeight: 600 }}>טופס הזמנת רכש (Purchase Order)</p>
           <div className="order-meta">
             <strong>פקודת רכש #{list.order_number}</strong> · {list.name} · תאריך: {list.list_date}
             {list.warehouse_name && <span> · מחסן: {list.warehouse_name}</span>}
+            {list.email_sent_at && <span className="badge badge-success" style={{ marginRight: 6 }}>נשלח במייל</span>}
           </div>
         </div>
       </div>
@@ -152,7 +217,7 @@ export default function ShoppingListCard() {
         </p>
         {list.notes && <p><strong>הערות:</strong> {list.notes}</p>}
         <p>
-          <strong>מחסן:</strong>{' '}
+          <strong>מחסן יעד (המשלוח אמור להגיע לכאן):</strong>{' '}
           {(canEdit || list.status === 'completed') && warehouses.length > 0 ? (
             <select
               value={list.warehouse_id ?? ''}
@@ -190,8 +255,13 @@ export default function ShoppingListCard() {
             קיבוץ לפי ספק
           </button>
           <button type="button" className="btn btn-secondary" onClick={() => window.print()}>
-            הדפס פקודה
+            הפק טופס הזמנה (הדפסה)
           </button>
+          {suppliersInOrder.length > 0 && (
+            <button type="button" className="btn btn-primary" onClick={openEmailModal}>
+              שלח לספק
+            </button>
+          )}
         </div>
         </div>
       </div>
@@ -363,6 +433,54 @@ export default function ShoppingListCard() {
               <button type="button" className="btn btn-primary" onClick={() => changeStatus('completed', completeWarehouseId)}>אישור – סימון כבוצעה</button>
               <button type="button" className="btn btn-secondary" onClick={() => setCompleteModal(false)}>ביטול</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {emailModal && (
+        <div className="modal-overlay" onClick={() => setEmailModal(false)}>
+          <div className="modal-content card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+            <h3 style={{ margin: '0 0 1rem' }}>שליחת הזמנה לספק</h3>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>בחר ספק, נסח מייל (AI) ופתח בתוכנת המייל. סימון "נשלח במייל" מונע שליחה כפולה.</p>
+            <div className="form-group">
+              <label>שלח לספק</label>
+              <select
+                value={emailSupplierId}
+                onChange={(e) => { setEmailSupplierId(e.target.value); setEmailDraft(null); }}
+                style={{ width: '100%', padding: '0.5rem 0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}
+              >
+                <option value="">בחר ספק...</option>
+                {suppliersInOrder.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name} {s.email ? `(${s.email})` : ''}</option>
+                ))}
+              </select>
+            </div>
+            {!emailDraft ? (
+              <button type="button" className="btn btn-primary" onClick={fetchDraftEmail} disabled={!emailSupplierId || emailDraftLoading}>
+                {emailDraftLoading ? 'מנסח...' : 'נסח מייל (AI)'}
+              </button>
+            ) : (
+              <>
+                <div className="form-group">
+                  <label>אל (מייל הספק)</label>
+                  <input type="text" value={emailDraft.to || ''} readOnly style={{ width: '100%', padding: '0.5rem', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }} />
+                </div>
+                <div className="form-group">
+                  <label>נושא</label>
+                  <input type="text" value={emailDraft.subject || ''} readOnly style={{ width: '100%', padding: '0.5rem', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }} />
+                </div>
+                <div className="form-group">
+                  <label>גוף ההודעה</label>
+                  <textarea value={emailDraft.body || ''} readOnly rows={8} style={{ width: '100%', padding: '0.5rem', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', resize: 'vertical' }} />
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '1rem' }}>
+                  <button type="button" className="btn btn-primary" onClick={openMailto}>פתח במייל</button>
+                  <button type="button" className="btn btn-secondary" onClick={markEmailSent}>סומן כנשלח</button>
+                  <button type="button" className="btn btn-secondary" onClick={() => setEmailDraft(null)}>נסח מחדש</button>
+                  <button type="button" className="btn btn-secondary" onClick={() => setEmailModal(false)}>ביטול</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

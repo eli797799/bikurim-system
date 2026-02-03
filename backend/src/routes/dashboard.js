@@ -1,13 +1,29 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
+import Groq from 'groq-sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const router = Router();
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
 const RATE_LIMIT_MESSAGE = 'המערכת בעומס קל, אנא המתן 30 שניות ונסה שוב';
+const RETRY_DELAY_MS = 2000; // 2 שניות לפני מעבר למפתח הגיבוי
 
+/** זיהוי שגיאת עומס (429 / Resource Exhausted) */
 function isRateLimitError(err) {
   const msg = (err?.message || err?.toString || '').toString();
-  return msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('rate limit') || msg.includes('Too Many Requests');
+  const status = err?.status ?? err?.statusCode ?? err?.response?.status;
+  return (
+    status === 429 ||
+    msg.includes('429') ||
+    msg.includes('RESOURCE_EXHAUSTED') ||
+    msg.includes('rate limit') ||
+    msg.includes('quota') ||
+    msg.includes('Too Many Requests')
+  );
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 const RISK_DAYS_THRESHOLD = 7;
 
@@ -181,10 +197,20 @@ const FORECAST_PROMPT = `אתה יועץ מלאי. קיבלת נתונים על 
 }
 אם אין היסטוריה מספקת – risk: "בינוני", trend: "יציב", explanation: "אין היסטוריה מספקת לחיזוי".`;
 
+/** חילוץ טקסט מתשובת Groq או Gemini */
+function getRawTextFromResult(result, isGroq = false) {
+  if (isGroq && result?.choices?.[0]?.message?.content) {
+    return String(result.choices[0].message.content).trim();
+  }
+  return result?.response?.text?.()?.trim() || '';
+}
+
 router.post('/forecast/gemini', async (req, res, next) => {
   try {
-    const apiKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_API_KEY_BACKUP;
-    if (!apiKey) return res.status(503).json({ error: 'שירות הניתוח לא מוגדר.' });
+    const groqKey = process.env.GROQ_API_KEY;
+    const backupKey = process.env.GOOGLE_API_KEY_BACKUP;
+    if (!groqKey && !backupKey) return res.status(503).json({ error: 'שירות הניתוח לא מוגדר. הגדר GROQ_API_KEY או GOOGLE_API_KEY_BACKUP.' });
+
     const { product_name, total_stock, daily_avg_usage, days_until_shortage, estimated_shortage_date, has_sufficient_history } = req.body;
     const text = `מוצר: ${product_name || 'לא ידוע'}
 מלאי נוכחי (סה"כ): ${total_stock ?? 0}
@@ -194,10 +220,39 @@ router.post('/forecast/gemini', async (req, res, next) => {
 היסטוריה מספקת: ${has_sufficient_history ? 'כן' : 'לא'}
 
 ${FORECAST_PROMPT}`;
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-    const result = await model.generateContent(text);
-    const raw = result.response?.text?.()?.trim() || '';
+
+    let raw = '';
+
+    // 1. קודם כל Groq (llama-3.3-70b-versatile) – תחזיות מלאי וימי עד חוסר
+    if (groqKey) {
+      try {
+        const groq = new Groq({ apiKey: groqKey });
+        const chatCompletion = await groq.chat.completions.create({
+          messages: [{ role: 'user', content: text }],
+          model: GROQ_MODEL,
+        });
+        raw = getRawTextFromResult(chatCompletion, true);
+      } catch (err) {
+        if (!isRateLimitError(err)) throw err;
+      }
+    }
+
+    // 2. Fallback: אם Groq לא זמין – GOOGLE_API_KEY_BACKUP (Gemini)
+    if (!raw && backupKey) {
+      await sleep(RETRY_DELAY_MS);
+      try {
+        const genAI = new GoogleGenerativeAI(backupKey);
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+        const result = await model.generateContent(text);
+        raw = getRawTextFromResult(result, false);
+      } catch (err) {
+        if (isRateLimitError(err)) return res.status(503).json({ error: RATE_LIMIT_MESSAGE });
+        throw err;
+      }
+    }
+
+    if (!raw) return res.status(503).json({ error: RATE_LIMIT_MESSAGE });
+
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : { risk: 'בינוני', trend: 'יציב', explanation: 'לא ניתן לנתח.', recommendation: '' };
     res.json({

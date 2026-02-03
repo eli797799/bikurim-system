@@ -36,6 +36,12 @@ export default function WarehouseDetail() {
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [inventorySearch, setInventorySearch] = useState('');
   const [inventorySort, setInventorySort] = useState('name');
+  const [expectedDeliveries, setExpectedDeliveries] = useState([]);
+  const [expectedPopupDismissed, setExpectedPopupDismissed] = useState(false);
+  const [receiveFromOrderListId, setReceiveFromOrderListId] = useState(null);
+  const [receiveFromOrderItems, setReceiveFromOrderItems] = useState([]);
+  const [receiveFromOrderSaving, setReceiveFromOrderSaving] = useState(false);
+  const [receiveFromOrderDate, setReceiveFromOrderDate] = useState(new Date().toISOString().slice(0, 10));
 
   const load = () => {
     setLoading(true);
@@ -53,9 +59,15 @@ export default function WarehouseDetail() {
       })
       .catch((e) => alert(e.message))
       .finally(() => setLoading(false));
+    if (isWorkerView) {
+      api.warehouses.getExpectedDeliveries(id).then(setExpectedDeliveries).catch(() => setExpectedDeliveries([]));
+    }
   };
 
   useEffect(load, [id]);
+  useEffect(() => {
+    if (isWorkerView && id) api.warehouses.getExpectedDeliveries(id).then(setExpectedDeliveries).catch(() => setExpectedDeliveries([]));
+  }, [isWorkerView, id]);
   useEffect(() => {
     api.products.list({}).then(setProducts).catch(() => []);
     api.suppliers.list({}).then(setSuppliers).catch(() => []);
@@ -87,7 +99,45 @@ export default function WarehouseDetail() {
     setScannedData(null);
     setScannedItems([]);
     setScanUseCamera(false);
+    setReceiveFromOrderListId(null);
+    setReceiveFromOrderItems([]);
+    setReceiveFromOrderDate(new Date().toISOString().slice(0, 10));
     setReceiveModal(true);
+  };
+
+  const startReceiveFromOrder = (list) => {
+    setReceiveFromOrderListId(list.id);
+    setReceiveFromOrderItems(
+      (list.items || []).map((i) => ({ product_id: i.product_id, product_name: i.product_name, quantity: Number(i.quantity), unit_of_measure: i.unit_of_measure, received_qty: Number(i.quantity) }))
+    );
+    setReceiveSubMode('from-order');
+  };
+
+  const submitReceiveFromOrder = () => {
+    const toSend = receiveFromOrderItems.filter((i) => i.received_qty != null && Number(i.received_qty) > 0);
+    if (toSend.length === 0) return alert('נא להזין כמות שהתקבלה לפחות לפריט אחד');
+    setReceiveFromOrderSaving(true);
+    api.warehouses
+      .receiveFromOrder(id, {
+        shopping_list_id: receiveFromOrderListId,
+        movement_date: receiveFromOrderDate,
+        items: toSend.map((i) => ({ product_id: i.product_id, quantity: Number(i.received_qty), unit_of_measure: i.unit_of_measure })),
+      })
+      .then((res) => {
+        load();
+        api.warehouses.getExpectedDeliveries(id).then(setExpectedDeliveries).catch(() => {});
+        setReceiveModal(false);
+        setReceiveSubMode(null);
+        setReceiveFromOrderListId(null);
+        setReceiveFromOrderItems([]);
+        if (res.discrepancy_alert) alert('המשלוח נרשם. נשלחה התראה לקניין על חוסר התאמה בכמויות/פריטים.');
+      })
+      .catch((e) => alert(e.message))
+      .finally(() => setReceiveFromOrderSaving(false));
+  };
+
+  const updateReceiveFromOrderItem = (idx, field, value) => {
+    setReceiveFromOrderItems((prev) => prev.map((item, i) => (i === idx ? { ...item, [field]: value } : item)));
   };
 
   const startScanCamera = async () => {
@@ -287,6 +337,32 @@ export default function WarehouseDetail() {
         </div>
       )}
 
+      {isWorkerView && expectedDeliveries.length > 0 && !expectedPopupDismissed && (
+        <div className="card" style={{ marginBottom: '1rem', borderColor: 'var(--primary)', background: 'rgba(34, 139, 34, 0.08)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <div>
+              <strong style={{ fontSize: '1.1rem' }}>צפי לקבל משלוח</strong>
+              <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: 'var(--text-muted)' }}>יש {expectedDeliveries.length} פקוד{expectedDeliveries.length === 1 ? 'ת' : 'ות'} רכש מאושרות שמיועדות למחסן זה.</p>
+              <ul style={{ margin: '0.5rem 0 0 1.25rem', padding: 0, fontSize: '0.95rem' }}>
+                {expectedDeliveries.map((d) => (
+                  <li key={d.id}>
+                    <strong>פקודה #{d.order_number}</strong> – {d.name} (תאריך: {d.list_date})
+                    <ul style={{ margin: '0.25rem 0 0 1rem', padding: 0 }}>
+                      {(d.items || []).map((it, i) => (
+                        <li key={i}>{it.product_name}: {Number(it.quantity)} {it.unit_of_measure}</li>
+                      ))}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <button type="button" className="btn btn-primary" style={isWorkerView ? { minHeight: 44 } : {}} onClick={() => setExpectedPopupDismissed(true)}>
+              הבנתי
+            </button>
+          </div>
+        </div>
+      )}
+
       {!isWorkerView && (
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
           <button type="button" className={`btn ${tab === 'inventory' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('inventory')}>מלאי</button>
@@ -425,7 +501,12 @@ export default function WarehouseDetail() {
 
             {receiveSubMode === null && (
               <>
-                <div style={{ marginBottom: '1rem' }}>
+                <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  {expectedDeliveries.length > 0 && (
+                    <button type="button" className="btn btn-primary" style={{ fontSize: isWorkerView ? '1rem' : '0.9rem', minHeight: isWorkerView ? 48 : undefined }} onClick={() => setReceiveSubMode('from-order')}>
+                      📦 קבל מפקודת רכש
+                    </button>
+                  )}
                   <button type="button" className="btn btn-secondary" style={{ fontSize: isWorkerView ? '1rem' : '0.9rem', minHeight: isWorkerView ? 48 : undefined }} onClick={() => setReceiveSubMode('scan')}>
                     📷 סרוק תעודה (משוח עם AI)
                   </button>
@@ -478,6 +559,61 @@ export default function WarehouseDetail() {
                     <button type="button" className="btn btn-secondary" onClick={() => setReceiveModal(false)} style={isWorkerView ? { minHeight: 48 } : {}}>ביטול</button>
                   </div>
                 </form>
+              </>
+            )}
+
+            {receiveSubMode === 'from-order' && (
+              <>
+                <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>בחר פקודה והזן את הכמויות שהתקבלו. אם יש שינוי מההזמנה – הקניין יקבל התראה.</p>
+                {!receiveFromOrderListId ? (
+                  <div className="form-group">
+                    <label>פקודת רכש</label>
+                    <select value="" onChange={(e) => { const v = e.target.value; if (v) startReceiveFromOrder(expectedDeliveries.find((d) => d.id === Number(v))); }} style={{ width: '100%', padding: '0.5rem', fontSize: '1rem' }}>
+                      <option value="">בחר פקודה...</option>
+                      {expectedDeliveries.map((d) => (
+                        <option key={d.id} value={d.id}>#{d.order_number} – {d.name} ({d.list_date})</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <>
+                    <div className="form-group">
+                      <label>תאריך קבלה</label>
+                      <input type="date" value={receiveFromOrderDate} onChange={(e) => setReceiveFromOrderDate(e.target.value)} style={{ padding: '0.5rem' }} />
+                    </div>
+                    <div className="table-wrap" style={{ marginBottom: '1rem', maxHeight: 260, overflow: 'auto' }}>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>מוצר</th>
+                            <th>כמות בהזמנה</th>
+                            <th>כמות שהתקבלה *</th>
+                            <th>יחידה</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {receiveFromOrderItems.map((item, idx) => (
+                            <tr key={idx}>
+                              <td data-label="מוצר">{item.product_name}</td>
+                              <td data-label="בהזמנה">{Number(item.quantity)}</td>
+                              <td data-label="התקבלה">
+                                <input type="number" step="0.01" min="0" value={item.received_qty ?? ''} onChange={(e) => updateReceiveFromOrderItem(idx, 'received_qty', e.target.value)} style={{ width: 80, padding: '0.35rem' }} />
+                              </td>
+                              <td data-label="יחידה">{item.unit_of_measure}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <button type="button" className="btn btn-primary" onClick={submitReceiveFromOrder} disabled={receiveFromOrderSaving}>
+                        {receiveFromOrderSaving ? 'שומר...' : 'אשר קבלה'}
+                      </button>
+                      <button type="button" className="btn btn-secondary" onClick={() => { setReceiveSubMode(null); setReceiveFromOrderListId(null); setReceiveFromOrderItems([]); }}>חזור</button>
+                      <button type="button" className="btn btn-secondary" onClick={() => setReceiveModal(false)}>ביטול</button>
+                    </div>
+                  </>
+                )}
               </>
             )}
 

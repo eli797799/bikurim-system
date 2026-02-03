@@ -121,7 +121,7 @@ export default function ShoppingLists() {
               <textarea value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} rows={2} />
             </div>
             <div className="form-group">
-              <label>מחסן (אופציונלי)</label>
+              <label>מחסן יעד – לאיזה מחסן המשלוח אמור להגיע</label>
               <select value={form.warehouse_id} onChange={(e) => setForm((f) => ({ ...f, warehouse_id: e.target.value }))}>
                 <option value="">ללא מחסן</option>
                 {warehouses.map((w) => (
@@ -199,6 +199,7 @@ export default function ShoppingLists() {
                   <th>תאריך</th>
                   <th>סטטוס</th>
                   <th>מחסן</th>
+                  <th>נשלח</th>
                   <th>הערות</th>
                   <th></th>
                 </tr>
@@ -215,9 +216,11 @@ export default function ShoppingLists() {
                       </span>
                     </td>
                     <td data-label="מחסן">{row.warehouse_name || '—'}</td>
+                    <td data-label="נשלח">{row.email_sent_at ? <span className="badge badge-success">נשלח במייל</span> : '—'}</td>
                     <td data-label="הערות">{row.notes ? row.notes.slice(0, 40) + (row.notes.length > 40 ? '…' : '') : '—'}</td>
                     <td data-label="">
                       <Link to={`/shopping-lists/${row.id}`}>לפתיחה</Link>
+                      <Link to={`/shopping-lists/${row.id}`} state={{ openEmailModal: true }} className="btn btn-primary" style={{ marginRight: 8, marginLeft: 4, padding: '0.25rem 0.5rem', fontSize: '0.85rem', display: 'inline-block' }}>שלח לספק</Link>
                       {row.status !== 'completed' && (
                         <button type="button" className="btn btn-secondary" style={{ marginRight: 8, padding: '0.25rem 0.5rem', fontSize: '0.85rem' }} onClick={(ev) => handleDuplicate(ev, row.id)}>שכפול</button>
                       )}

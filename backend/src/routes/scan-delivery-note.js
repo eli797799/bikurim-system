@@ -4,9 +4,9 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 const router = Router();
 
 const RATE_LIMIT_MESSAGE = 'המערכת בעומס קל, אנא המתן 30 שניות ונסה שוב';
-const RETRY_DELAY_MS = 2000;
-const MAX_RETRIES_PER_KEY = 1;
+const RETRY_DELAY_MS = 2000; // 2 שניות לפני מעבר למפתח הגיבוי
 
+/** זיהוי שגיאת עומס (429 / Resource Exhausted) */
 function isRateLimitError(err) {
   const msg = (err?.message || err?.toString || '').toString();
   const status = err?.status ?? err?.statusCode ?? err?.response?.status;
@@ -20,7 +20,7 @@ function isRateLimitError(err) {
   );
 }
 
-async function sleep(ms) {
+function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -50,8 +50,7 @@ router.post('/', async (req, res, next) => {
   try {
     const primaryKey = process.env.GOOGLE_API_KEY;
     const backupKey = process.env.GOOGLE_API_KEY_BACKUP;
-    const keys = [primaryKey, backupKey].filter(Boolean);
-    if (keys.length === 0) {
+    if (!primaryKey && !backupKey) {
       return res.status(503).json({ error: 'שירות הסריקה לא מוגדר. יש להגדיר GOOGLE_API_KEY או GOOGLE_API_KEY_BACKUP.' });
     }
 
@@ -67,28 +66,29 @@ router.post('/', async (req, res, next) => {
 
     let result;
     let lastErr;
-    for (let ki = 0; ki < keys.length; ki++) {
-      if (ki > 0) await sleep(RETRY_DELAY_MS);
-      const apiKey = keys[ki];
-      const genAI = new GoogleGenerativeAI(apiKey);
-      for (let attempt = 0; attempt <= MAX_RETRIES_PER_KEY; attempt++) {
-        try {
-          if (attempt > 0) await sleep(RETRY_DELAY_MS);
-          result = await tryGenerateContent(genAI, base64Data);
-          lastErr = null;
-          break;
-        } catch (err) {
-          lastErr = err;
-          if (isRateLimitError(err) && attempt < MAX_RETRIES_PER_KEY) {
-            continue;
-          }
-          if (isRateLimitError(err)) {
-            break;
-          }
-          throw err;
-        }
+
+    // 1. פנייה קודם כל עם המפתח הראשי (GOOGLE_API_KEY)
+    if (primaryKey) {
+      try {
+        const genAI = new GoogleGenerativeAI(primaryKey);
+        result = await tryGenerateContent(genAI, base64Data);
+      } catch (err) {
+        lastErr = err;
+        if (!isRateLimitError(err)) throw err;
       }
-      if (result) break;
+    }
+
+    // 2. אם 429 / Resource Exhausted – המתנה 2 שניות ואז ניסיון חוזר עם מפתח הגיבוי (GOOGLE_API_KEY_BACKUP)
+    if (!result && backupKey && lastErr && isRateLimitError(lastErr)) {
+      await sleep(RETRY_DELAY_MS);
+      try {
+        const genAI = new GoogleGenerativeAI(backupKey);
+        result = await tryGenerateContent(genAI, base64Data);
+        lastErr = null;
+      } catch (err) {
+        lastErr = err;
+        if (!isRateLimitError(err)) throw err;
+      }
     }
 
     if (!result && lastErr) {

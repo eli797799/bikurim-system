@@ -12,6 +12,7 @@ import warehousesRouter from './routes/warehouses.js';
 import usersRouter from './routes/users.js';
 import scanDeliveryNoteRouter from './routes/scan-delivery-note.js';
 import dashboardRouter from './routes/dashboard.js';
+import receiptDiscrepancyAlertsRouter from './routes/receipt-discrepancy-alerts.js';
 import { errorHandler } from './middleware/error.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -31,6 +32,7 @@ app.use('/api/warehouses', warehousesRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/scan-delivery-note', scanDeliveryNoteRouter);
 app.use('/api/dashboard', dashboardRouter);
+app.use('/api/receipt-discrepancy-alerts', receiptDiscrepancyAlertsRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, message: 'Bikurim API' });

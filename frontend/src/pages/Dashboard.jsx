@@ -17,6 +17,7 @@ export default function Dashboard() {
   const [warehouseFilter, setWarehouseFilter] = useState(null);
   const [geminiLoading, setGeminiLoading] = useState({});
   const [geminiCache, setGeminiCache] = useState({});
+  const [receiptAlerts, setReceiptAlerts] = useState([]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -34,6 +35,12 @@ export default function Dashboard() {
     const t = setInterval(load, AUTO_REFRESH_MS);
     return () => clearInterval(t);
   }, [load]);
+  useEffect(() => {
+    api.receiptDiscrepancyAlerts.list().then(setReceiptAlerts).catch(() => setReceiptAlerts([]));
+  }, []);
+  useEffect(() => {
+    if (!loading && data) api.receiptDiscrepancyAlerts.list().then(setReceiptAlerts).catch(() => {});
+  }, [loading, data?.updated_at]);
 
   const fetchGemini = (row) => {
     const key = `${row.product_id}-${forecastDays}`;
@@ -55,6 +62,12 @@ export default function Dashboard() {
   const createShoppingList = () => {
     api.shoppingLists.create({ name: `רשימת קנייה מהלוח – ${new Date().toISOString().slice(0, 10)}` })
       .then((list) => navigate(`/shopping-lists/${list.id}`))
+      .catch((e) => alert(e.message));
+  };
+
+  const markReceiptAlertRead = (alertId) => {
+    api.receiptDiscrepancyAlerts.markRead(alertId)
+      .then(() => setReceiptAlerts((prev) => prev.filter((a) => a.id !== alertId)))
       .catch((e) => alert(e.message));
   };
 
@@ -149,6 +162,60 @@ export default function Dashboard() {
         </div>
         {kpiFilter && <p style={{ margin: '0.75rem 0 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>הטבלאות למטה מסוננות. לחץ שוב על הכרטיס לביטול.</p>}
       </section>
+
+      {receiptAlerts.length > 0 && (
+        <section className="card" style={{ marginBottom: '1.5rem', borderColor: 'var(--warning)', background: 'rgba(255,193,7,0.06)' }}>
+          <h2 style={{ margin: '0 0 1rem', fontSize: '1.1rem' }}>התראות חוסר התאמה במשלוחים</h2>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>חסנאי קיבל משלוח ששונה מהפקודה (כמות/פריטים). פרטים להלן.</p>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>מחסן</th>
+                  <th>פקודה</th>
+                  <th>תאריך התראה</th>
+                  <th>פירוט חוסר התאמה</th>
+                  <th style={{ width: 100 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {receiptAlerts.map((a) => {
+                  let details = {};
+                  try {
+                    details = typeof a.details === 'object' && a.details !== null ? a.details : (a.details ? JSON.parse(a.details) : {});
+                  } catch (_) {}
+                  const diffs = details.differences || [];
+                  return (
+                    <tr key={a.id} className={!a.read_at ? 'low-stock-row' : ''}>
+                      <td data-label="מחסן">{a.warehouse_name || '—'}</td>
+                      <td data-label="פקודה">
+                        <Link to={`/shopping-lists/${a.shopping_list_id}`}>#{a.order_number} – {a.list_name}</Link>
+                      </td>
+                      <td data-label="תאריך">{a.created_at ? new Date(a.created_at).toLocaleString('he-IL') : '—'}</td>
+                      <td data-label="פירוט">
+                        <ul style={{ margin: 0, paddingRight: 16, fontSize: '0.9rem' }}>
+                          {diffs.map((d, i) => (
+                            <li key={i}>
+                              {d.product_name}: הוזמן {Number(d.ordered_qty)} {d.unit}, התקבל {Number(d.received_qty)} {d.type === 'short' ? '(חסר)' : d.type === 'over' ? '(עודף)' : '(פריט נוסף)'}
+                            </li>
+                          ))}
+                        </ul>
+                      </td>
+                      <td data-label="">
+                        {!a.read_at && (
+                          <button type="button" className="btn btn-secondary" style={{ fontSize: '0.85rem', padding: '0.35rem 0.6rem' }} onClick={() => markReceiptAlertRead(a.id)}>
+                            סומן כנקרא
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       <section className="card" style={{ marginBottom: '1.5rem' }}>
         <h2 style={{ margin: '0 0 1rem', fontSize: '1.1rem' }}>מלאי כללי – כל המחסנים</h2>

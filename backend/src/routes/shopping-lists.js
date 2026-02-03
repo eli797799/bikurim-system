@@ -1,7 +1,27 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const router = Router();
+const RATE_LIMIT_MESSAGE = 'המערכת בעומס קל, אנא המתן 30 שניות ונסה שוב';
+const RETRY_DELAY_MS = 2000;
+
+function isRateLimitError(err) {
+  const msg = (err?.message || err?.toString || '').toString();
+  const status = err?.status ?? err?.statusCode ?? err?.response?.status;
+  return (
+    status === 429 ||
+    msg.includes('429') ||
+    msg.includes('RESOURCE_EXHAUSTED') ||
+    msg.includes('rate limit') ||
+    msg.includes('quota') ||
+    msg.includes('Too Many Requests')
+  );
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 const DEFAULT_UNIT = "יח'";
 
 function getCheapestSupplierForProduct(productId) {
@@ -37,12 +57,12 @@ async function assertNotCompleted(shoppingListId) {
   return r.rows[0];
 }
 
-const listFields = 'id, order_number, name, list_date, notes, status, warehouse_id, created_by, created_at, updated_at';
+const listFields = 'id, order_number, name, list_date, notes, status, warehouse_id, email_sent_at, created_by, created_at, updated_at';
 
 router.get('/', async (req, res, next) => {
   try {
     const result = await query(
-      `SELECT sl.id, sl.order_number, sl.name, sl.list_date, sl.notes, sl.status, sl.warehouse_id, sl.created_by, sl.created_at, sl.updated_at,
+      `SELECT sl.id, sl.order_number, sl.name, sl.list_date, sl.notes, sl.status, sl.warehouse_id, sl.email_sent_at, sl.created_by, sl.created_at, sl.updated_at,
               w.name AS warehouse_name
        FROM shopping_lists sl
        LEFT JOIN warehouses w ON w.id = sl.warehouse_id
@@ -58,7 +78,7 @@ router.get('/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
     const list = await query(
-      `SELECT sl.id, sl.order_number, sl.name, sl.list_date, sl.notes, sl.status, sl.warehouse_id, sl.created_by, sl.created_at, sl.updated_at,
+      `SELECT sl.id, sl.order_number, sl.name, sl.list_date, sl.notes, sl.status, sl.warehouse_id, sl.email_sent_at, sl.created_by, sl.created_at, sl.updated_at,
               w.name AS warehouse_name
        FROM shopping_lists sl
        LEFT JOIN warehouses w ON w.id = sl.warehouse_id
@@ -70,7 +90,7 @@ router.get('/:id', async (req, res, next) => {
       `SELECT sli.id, sli.shopping_list_id, sli.product_id, sli.quantity, sli.unit_of_measure,
               sli.selected_supplier_id, sli.price_at_selection, sli.sort_order,
               p.name AS product_name, p.code AS product_code,
-              s.name AS supplier_name
+              s.name AS supplier_name, s.email AS supplier_email
        FROM shopping_list_items sli
        JOIN products p ON p.id = sli.product_id
        LEFT JOIN suppliers s ON s.id = sli.selected_supplier_id
@@ -85,6 +105,95 @@ router.get('/:id', async (req, res, next) => {
     }
     const itemsWithSupplierCount = items.rows.map((i) => ({ ...i, supplier_count: supplierCounts[i.product_id] || 0 }));
     res.json({ ...list.rows[0], items: itemsWithSupplierCount });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** טיוטת מייל לספק (Gemini) – מפתח ראשי, ב־429 המתנה 2 שניות ומפתח גיבוי */
+router.post('/:id/draft-email', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { supplier_id } = req.body;
+    if (!supplier_id) return res.status(400).json({ error: 'נדרש supplier_id' });
+    const listRes = await query(
+      `SELECT sl.id, sl.order_number, sl.name, sl.list_date FROM shopping_lists sl WHERE sl.id = $1`,
+      [id]
+    );
+    if (listRes.rows.length === 0) return res.status(404).json({ error: 'פקודת רכש לא נמצאה' });
+    const list = listRes.rows[0];
+    const supplierRes = await query(
+      'SELECT id, name, email FROM suppliers WHERE id = $1',
+      [supplier_id]
+    );
+    if (supplierRes.rows.length === 0) return res.status(404).json({ error: 'ספק לא נמצא' });
+    const supplier = supplierRes.rows[0];
+    const itemsRes = await query(
+      `SELECT sli.product_id, sli.quantity, sli.unit_of_measure, p.name AS product_name
+       FROM shopping_list_items sli
+       JOIN products p ON p.id = sli.product_id
+       WHERE sli.shopping_list_id = $1 AND sli.selected_supplier_id = $2 ORDER BY sli.sort_order, sli.id`,
+      [id, supplier_id]
+    );
+    const items = itemsRes.rows;
+    if (items.length === 0) return res.status(400).json({ error: 'אין פריטים בפקודה עבור ספק זה' });
+    const itemsText = items.map((i) => `- ${i.product_name}: ${Number(i.quantity)} ${i.unit_of_measure}`).join('\n');
+    const prompt = `נסח מייל מקצועי ומכובד בעברית לספק (לא ללקוח).
+הנתונים:
+- שם הספק: ${supplier.name}
+- פקודת רכש מס': ${list.order_number}
+- שם הפקודה: ${list.name}
+- תאריך: ${list.list_date}
+- רשימת מוצרים וכמויות:
+${itemsText}
+
+החזר JSON בלבד, בלי markdown:
+{ "subject": "נושא המייל (משפט קצר)", "body": "גוף המייל בעברית, פסקה או שתיים, כולל פנייה לספק ורשימת המוצרים/כמויות" }`;
+
+    const primaryKey = process.env.GOOGLE_API_KEY;
+    const backupKey = process.env.GOOGLE_API_KEY_BACKUP;
+    if (!primaryKey && !backupKey) return res.status(503).json({ error: 'שירות ניסוח המייל לא מוגדר. הגדר GOOGLE_API_KEY או GOOGLE_API_KEY_BACKUP.' });
+
+    let result;
+    let lastErr;
+    if (primaryKey) {
+      try {
+        const genAI = new GoogleGenerativeAI(primaryKey);
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+        result = await model.generateContent(prompt);
+      } catch (err) {
+        lastErr = err;
+        if (!isRateLimitError(err)) throw err;
+      }
+    }
+    if (!result && backupKey && lastErr && isRateLimitError(lastErr)) {
+      await sleep(RETRY_DELAY_MS);
+      try {
+        const genAI = new GoogleGenerativeAI(backupKey);
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+        result = await model.generateContent(prompt);
+        lastErr = null;
+      } catch (err) {
+        lastErr = err;
+        if (!isRateLimitError(err)) throw err;
+      }
+    }
+    if (!result && lastErr) {
+      if (isRateLimitError(lastErr)) return res.status(503).json({ error: RATE_LIMIT_MESSAGE });
+      throw lastErr;
+    }
+    const raw = result.response?.text?.()?.trim() || '';
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    let subject = `פקודת רכש מס' ${list.order_number} – ביכורים`;
+    let body = `שלום ${supplier.name},\n\nמצורפת פקודת רכש מס' ${list.order_number} (${list.list_date}).\n\nרשימת מוצרים:\n${itemsText}\n\nבברכה,\nביכורים תעשיות מזון בע"מ`;
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (parsed.subject) subject = parsed.subject;
+        if (parsed.body) body = parsed.body;
+      } catch (_) {}
+    }
+    res.json({ to: supplier.email || '', subject, body });
   } catch (err) {
     next(err);
   }
@@ -145,14 +254,14 @@ router.post('/:id/duplicate', async (req, res, next) => {
 router.patch('/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { name, list_date, notes, status, warehouse_id } = req.body;
+    const { name, list_date, notes, status, warehouse_id, email_sent_at } = req.body;
     const current = await query('SELECT id, status FROM shopping_lists WHERE id = $1', [id]);
     if (current.rows.length === 0) throw Object.assign(new Error('פקודת רכש לא נמצאה'), { statusCode: 404 });
     const isCompleted = current.rows[0].status === 'completed';
     if (isCompleted) {
-      const allowedWhenCompleted = ['warehouse_id'];
+      const allowedWhenCompleted = ['warehouse_id', 'email_sent_at'];
       const disallowed = [name !== undefined && 'name', list_date !== undefined && 'list_date', notes !== undefined && 'notes', status !== undefined && 'status'].filter(Boolean);
-      if (disallowed.length > 0) throw Object.assign(new Error('פקודה שבוצעה ניתנת רק לעדכון מחסן'), { statusCode: 403 });
+      if (disallowed.length > 0) throw Object.assign(new Error('פקודה שבוצעה ניתנת רק לעדכון מחסן או סימון נשלח במייל'), { statusCode: 403 });
     } else {
       if (name !== undefined || list_date !== undefined || notes !== undefined || status !== undefined || warehouse_id !== undefined) {
         await assertNotCompleted(id);
@@ -172,6 +281,7 @@ router.patch('/:id', async (req, res, next) => {
       }
     }
     if (warehouse_id !== undefined) { sets.push(`warehouse_id = $${i++}`); params.push(warehouse_id || null); }
+    if (email_sent_at !== undefined) { sets.push(`email_sent_at = $${i++}`); params.push(email_sent_at || null); }
     if (sets.length === 0) {
       const curr = await query(
         `SELECT sl.*, w.name AS warehouse_name FROM shopping_lists sl LEFT JOIN warehouses w ON w.id = sl.warehouse_id WHERE sl.id = $1`,
@@ -180,7 +290,7 @@ router.patch('/:id', async (req, res, next) => {
       return res.json(curr.rows[0]);
     }
     const result = await query(
-      `UPDATE shopping_lists SET ${sets.join(', ')} WHERE id = $1 RETURNING id, order_number, name, list_date, notes, status, warehouse_id, created_by, created_at, updated_at`,
+      `UPDATE shopping_lists SET ${sets.join(', ')} WHERE id = $1 RETURNING id, order_number, name, list_date, notes, status, warehouse_id, email_sent_at, created_by, created_at, updated_at`,
       params
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'פקודת רכש לא נמצאה' });

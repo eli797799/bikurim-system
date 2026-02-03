@@ -57,6 +57,7 @@ export const api = {
     addItem: (id, body) => request(`/api/shopping-lists/${id}/items`, { method: 'POST', body: JSON.stringify(body) }),
     updateItem: (listId, itemId, body) => request(`/api/shopping-lists/${listId}/items/${itemId}`, { method: 'PATCH', body: JSON.stringify(body) }),
     deleteItem: (listId, itemId) => request(`/api/shopping-lists/${listId}/items/${itemId}`, { method: 'DELETE' }),
+    draftEmail: (id, body) => request(`/api/shopping-lists/${id}/draft-email`, { method: 'POST', body: JSON.stringify(body) }),
   },
   users: {
     list: () => request('/api/users'),
@@ -73,6 +74,13 @@ export const api = {
     createMovement: (warehouseId, body) => request(`/api/warehouses/${warehouseId}/movements`, { method: 'POST', body: JSON.stringify(body) }),
     getAlerts: () => request('/api/warehouses/alerts'),
     getAlertsByWarehouse: (id) => request(`/api/warehouses/${id}/alerts`),
+    getExpectedDeliveries: (id) => request(`/api/warehouses/${id}/expected-deliveries`),
+    receiveFromOrder: (warehouseId, body) =>
+      request(`/api/warehouses/${warehouseId}/receive-from-order`, { method: 'POST', body: JSON.stringify(body) }),
+  },
+  receiptDiscrepancyAlerts: {
+    list: () => request('/api/receipt-discrepancy-alerts'),
+    markRead: (id) => request(`/api/receipt-discrepancy-alerts/${id}/read`, { method: 'PATCH' }),
   },
   scanDeliveryNote: {
     analyze: (imageBase64) =>
