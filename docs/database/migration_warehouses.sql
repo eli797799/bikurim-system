@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS warehouses (
 CREATE INDEX IF NOT EXISTS idx_warehouses_name ON warehouses(name);
 CREATE INDEX IF NOT EXISTS idx_warehouses_is_active ON warehouses(is_active);
 
+DROP TRIGGER IF EXISTS tr_warehouses_updated_at ON warehouses;
 CREATE TRIGGER tr_warehouses_updated_at
     BEFORE UPDATE ON warehouses
     FOR EACH ROW EXECUTE PROCEDURE set_updated_at();

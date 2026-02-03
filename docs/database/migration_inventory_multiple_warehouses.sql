@@ -44,6 +44,7 @@ CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_warehouse ON warehouse_invent
 CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_product ON warehouse_inventory(product_id);
 CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_min ON warehouse_inventory(warehouse_id, min_quantity) WHERE min_quantity IS NOT NULL;
 
+DROP TRIGGER IF EXISTS tr_warehouse_inventory_updated_at ON warehouse_inventory;
 CREATE TRIGGER tr_warehouse_inventory_updated_at BEFORE UPDATE ON warehouse_inventory
     FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
 

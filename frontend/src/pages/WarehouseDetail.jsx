@@ -30,6 +30,9 @@ export default function WarehouseDetail() {
   const [scannedItems, setScannedItems] = useState([]);
   const [scanSaving, setScanSaving] = useState(false);
   const scanFileInputRef = useRef(null);
+  const scanVideoRef = useRef(null);
+  const scanStreamRef = useRef(null);
+  const [scanUseCamera, setScanUseCamera] = useState(false);
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [inventorySearch, setInventorySearch] = useState('');
   const [inventorySort, setInventorySort] = useState('name');
@@ -63,6 +66,11 @@ export default function WarehouseDetail() {
     return () => clearInterval(t);
   }, [isWorkerView]);
 
+  useEffect(() => {
+    if (receiveSubMode === 'scan' && scanUseCamera) startScanCamera();
+    return () => stopScanCamera();
+  }, [receiveSubMode, scanUseCamera]);
+
   const filteredInventory = inventory
     .filter((row) => !inventorySearch.trim() || (row.product_name || '').toLowerCase().includes(inventorySearch.toLowerCase()) || (row.product_code || '').toLowerCase().includes(inventorySearch.toLowerCase()))
     .slice()
@@ -78,7 +86,38 @@ export default function WarehouseDetail() {
     setScanError(null);
     setScannedData(null);
     setScannedItems([]);
+    setScanUseCamera(false);
     setReceiveModal(true);
+  };
+
+  const startScanCamera = async () => {
+    setScanError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      scanStreamRef.current = stream;
+      if (scanVideoRef.current) scanVideoRef.current.srcObject = stream;
+    } catch (err) {
+      setScanError('לא ניתן לגשת למצלמה. בדוק הרשאות בדפדפן.');
+    }
+  };
+
+  const stopScanCamera = () => {
+    if (scanStreamRef.current) {
+      scanStreamRef.current.getTracks().forEach((t) => t.stop());
+      scanStreamRef.current = null;
+    }
+    if (scanVideoRef.current) scanVideoRef.current.srcObject = null;
+  };
+
+  const captureFromCamera = () => {
+    if (!scanVideoRef.current?.videoWidth) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = scanVideoRef.current.videoWidth;
+    canvas.height = scanVideoRef.current.videoHeight;
+    canvas.getContext('2d').drawImage(scanVideoRef.current, 0, 0);
+    setScanImage(canvas.toDataURL('image/jpeg', 0.85));
+    stopScanCamera();
+    setScanUseCamera(false);
   };
 
   const handleReceive = (e) => {
@@ -277,7 +316,7 @@ export default function WarehouseDetail() {
                     <th>מוצר</th>
                     <th>כמות נוכחית</th>
                     <th>יחידה</th>
-                    {isWorkerView ? <th>סטטוס</th> : <><th>כמות מינימום (התראה)</th><th>תאריך עדכון אחרון</th></>}
+                    {isWorkerView ? <><th>מינימום (התראה)</th><th>סטטוס</th></> : <><th>כמות מינימום (התראה)</th><th>תאריך עדכון אחרון</th></>}
                   </tr>
                 </thead>
                 <tbody>
@@ -291,9 +330,24 @@ export default function WarehouseDetail() {
                       <td data-label="כמות נוכחית">{Number(row.quantity)}</td>
                       <td data-label="יחידה">{row.unit_of_measure}</td>
                       {isWorkerView ? (
-                        <td data-label="סטטוס">
-                          <span className={`badge badge-${row.is_low_stock ? 'danger' : 'success'}`}>{row.is_low_stock ? 'נמוך' : 'תקין'}</span>
-                        </td>
+                        <>
+                          <td data-label="מינימום">
+                            {editingMin === row.product_id ? (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                                <input type="number" step="0.01" min="0" value={minQuantityVal} onChange={(e) => setMinQuantityVal(e.target.value)} style={{ width: 72, padding: '0.35rem', fontSize: isWorkerView ? '1rem' : undefined }} />
+                                <button type="button" className="btn btn-primary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.85rem' }} onClick={() => saveMinQuantity(row.product_id)}>שמירה</button>
+                                <button type="button" className="btn btn-secondary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.85rem' }} onClick={() => { setEditingMin(null); setMinQuantityVal(''); }}>ביטול</button>
+                              </span>
+                            ) : (
+                              <span onClick={() => startEditMin(row)} style={{ cursor: 'pointer', textDecoration: 'underline' }} title="לחץ לעריכת מינימום – מתחת לזה תקבל התראה">
+                                {row.min_quantity != null ? Number(row.min_quantity) : '—'}
+                              </span>
+                            )}
+                          </td>
+                          <td data-label="סטטוס">
+                            <span className={`badge badge-${row.is_low_stock ? 'danger' : 'success'}`}>{row.is_low_stock ? 'נמוך' : 'תקין'}</span>
+                          </td>
+                        </>
                       ) : (
                         <>
                           <td data-label="כמות מינימום">
@@ -371,13 +425,11 @@ export default function WarehouseDetail() {
 
             {receiveSubMode === null && (
               <>
-                {!isWorkerView && (
-                  <div style={{ marginBottom: '1rem' }}>
-                    <button type="button" className="btn btn-secondary" style={{ fontSize: '0.9rem' }} onClick={() => setReceiveSubMode('scan')}>
-                      סריקת תעודת משלוח
-                    </button>
-                  </div>
-                )}
+                <div style={{ marginBottom: '1rem' }}>
+                  <button type="button" className="btn btn-secondary" style={{ fontSize: isWorkerView ? '1rem' : '0.9rem', minHeight: isWorkerView ? 48 : undefined }} onClick={() => setReceiveSubMode('scan')}>
+                    📷 סרוק תעודה (משוח עם AI)
+                  </button>
+                </div>
                 <form onSubmit={handleReceive}>
                   <div className="form-group">
                     <label>מוצר *</label>
@@ -432,23 +484,38 @@ export default function WarehouseDetail() {
             {receiveSubMode === 'scan' && (
               <>
                 <input ref={scanFileInputRef} type="file" accept="image/*" onChange={handleScanFileSelect} style={{ display: 'none' }} />
-                <div style={{ marginBottom: '1rem' }}>
-                  <button type="button" className="btn btn-secondary" style={{ marginLeft: 0 }} onClick={() => scanFileInputRef.current?.click()}>
-                    בחר תמונה
-                  </button>
-                  <button type="button" className="btn btn-secondary" onClick={() => setReceiveSubMode(null)}>חזור להזנה ידנית</button>
-                </div>
+                {!scanImage && !scanUseCamera && (
+                  <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <button type="button" className="btn btn-primary" style={isWorkerView ? { minHeight: 48, fontSize: '1rem' } : {}} onClick={() => setScanUseCamera(true)}>
+                      📷 צלם עכשיו
+                    </button>
+                    <button type="button" className="btn btn-secondary" style={isWorkerView ? { minHeight: 48 } : {}} onClick={() => scanFileInputRef.current?.click()}>
+                      בחר תמונה מהמכשיר
+                    </button>
+                    <button type="button" className="btn btn-secondary" onClick={() => setReceiveSubMode(null)}>חזור להזנה ידנית</button>
+                  </div>
+                )}
+                {scanUseCamera && !scanImage && (
+                  <div style={{ marginBottom: '1rem' }}>
+                    <video ref={scanVideoRef} autoPlay playsInline muted style={{ width: '100%', maxHeight: 280, borderRadius: 'var(--radius)', background: '#000' }} />
+                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                      <button type="button" className="btn btn-primary" onClick={captureFromCamera}>צלם תעודה</button>
+                      <button type="button" className="btn btn-secondary" onClick={() => { stopScanCamera(); setScanUseCamera(false); }}>ביטול</button>
+                    </div>
+                  </div>
+                )}
                 {scanImage && (
                   <>
                     <img src={scanImage} alt="תעודה" style={{ maxWidth: '100%', maxHeight: 220, borderRadius: 'var(--radius)', marginBottom: '1rem' }} />
                     <button type="button" className="btn btn-primary" onClick={analyzeScan} disabled={scanAnalyzing} aria-busy={scanAnalyzing}>
                       {scanAnalyzing ? 'המערכת בעומס קל, מנסה שוב אוטומטית...' : 'נתח תמונה'}
                     </button>
+                    <button type="button" className="btn btn-secondary" style={{ marginRight: '0.5rem' }} onClick={() => { setScanImage(null); setScanError(null); }}>תמונה אחרת</button>
                   </>
                 )}
                 {scanError && <p style={{ color: 'var(--danger)', marginTop: '1rem' }}>{scanError}</p>}
                 <div style={{ marginTop: '1rem' }}>
-                  <button type="button" className="btn btn-secondary" onClick={() => setReceiveModal(false)}>ביטול</button>
+                  <button type="button" className="btn btn-secondary" onClick={() => { setReceiveModal(false); stopScanCamera(); }}>ביטול</button>
                 </div>
               </>
             )}
