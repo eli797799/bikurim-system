@@ -3,6 +3,35 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const router = Router();
 
+const RATE_LIMIT_MESSAGE = 'המערכת בעומס קל, אנא המתן 30 שניות ונסה שוב';
+const RETRY_DELAY_MS = 2000;
+const MAX_RETRIES_PER_KEY = 1;
+
+function isRateLimitError(err) {
+  const msg = (err?.message || err?.toString || '').toString();
+  const status = err?.status ?? err?.statusCode ?? err?.response?.status;
+  return (
+    status === 429 ||
+    msg.includes('429') ||
+    msg.includes('RESOURCE_EXHAUSTED') ||
+    msg.includes('rate limit') ||
+    msg.includes('quota') ||
+    msg.includes('Too Many Requests')
+  );
+}
+
+async function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function tryGenerateContent(genAI, base64Data) {
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  return model.generateContent([
+    { inlineData: { mimeType: 'image/jpeg', data: base64Data } },
+    { text: PROMPT },
+  ]);
+}
+
 const PROMPT = `אתה מומחה לחילוץ נתונים מתעודות משלוח.
 נתון לך תמונה של תעודת משלוח (חשבונית/הזמנה).
 חלץ את הנתונים הבאים בפורמט JSON בלבד, ללא טקסט נוסף:
@@ -19,9 +48,11 @@ const PROMPT = `אתה מומחה לחילוץ נתונים מתעודות מש�
 
 router.post('/', async (req, res, next) => {
   try {
-    const apiKey = process.env.GOOGLE_API_KEY;
-    if (!apiKey) {
-      return res.status(503).json({ error: 'שירות הסריקה לא מוגדר. יש להגדיר GOOGLE_API_KEY.' });
+    const primaryKey = process.env.GOOGLE_API_KEY;
+    const backupKey = process.env.GOOGLE_API_KEY_BACKUP;
+    const keys = [primaryKey, backupKey].filter(Boolean);
+    if (keys.length === 0) {
+      return res.status(503).json({ error: 'שירות הסריקה לא מוגדר. יש להגדיר GOOGLE_API_KEY או GOOGLE_API_KEY_BACKUP.' });
     }
 
     const { image } = req.body;
@@ -34,19 +65,38 @@ router.post('/', async (req, res, next) => {
       base64Data = base64Data.split(',')[1];
     }
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    let result;
+    let lastErr;
+    for (let ki = 0; ki < keys.length; ki++) {
+      if (ki > 0) await sleep(RETRY_DELAY_MS);
+      const apiKey = keys[ki];
+      const genAI = new GoogleGenerativeAI(apiKey);
+      for (let attempt = 0; attempt <= MAX_RETRIES_PER_KEY; attempt++) {
+        try {
+          if (attempt > 0) await sleep(RETRY_DELAY_MS);
+          result = await tryGenerateContent(genAI, base64Data);
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (isRateLimitError(err) && attempt < MAX_RETRIES_PER_KEY) {
+            continue;
+          }
+          if (isRateLimitError(err)) {
+            break;
+          }
+          throw err;
+        }
+      }
+      if (result) break;
+    }
 
-    const result = await model.generateContent([
-      {
-        inlineData: {
-          mimeType: 'image/jpeg',
-          data: base64Data,
-        },
-      },
-      { text: PROMPT },
-    ]);
-
+    if (!result && lastErr) {
+      if (isRateLimitError(lastErr)) {
+        return res.status(503).json({ error: RATE_LIMIT_MESSAGE });
+      }
+      throw lastErr;
+    }
     const response = result.response;
     const text = response?.text?.()?.trim() || '';
     if (!text) {
@@ -74,6 +124,9 @@ router.post('/', async (req, res, next) => {
   } catch (err) {
     if (err instanceof SyntaxError) {
       return res.status(502).json({ error: 'המערכת לא הצליחה לפרש את התשובה.' });
+    }
+    if (isRateLimitError(err)) {
+      return res.status(503).json({ error: RATE_LIMIT_MESSAGE });
     }
     next(err);
   }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
 import { api } from '../api';
 
@@ -22,6 +22,14 @@ export default function WarehouseDetail() {
   const [issueForm, setIssueForm] = useState({ product_id: '', quantity: '', movement_date: new Date().toISOString().slice(0, 10), destination: '', note: '' });
   const [editingMin, setEditingMin] = useState(null);
   const [minQuantityVal, setMinQuantityVal] = useState('');
+  const [receiveSubMode, setReceiveSubMode] = useState(null);
+  const [scanImage, setScanImage] = useState(null);
+  const [scanAnalyzing, setScanAnalyzing] = useState(false);
+  const [scanError, setScanError] = useState(null);
+  const [scannedData, setScannedData] = useState(null);
+  const [scannedItems, setScannedItems] = useState([]);
+  const [scanSaving, setScanSaving] = useState(false);
+  const scanFileInputRef = useRef(null);
 
   const load = () => {
     setLoading(true);
@@ -47,6 +55,15 @@ export default function WarehouseDetail() {
     api.suppliers.list({}).then(setSuppliers).catch(() => []);
   }, []);
 
+  const openReceiveModal = () => {
+    setReceiveSubMode(null);
+    setScanImage(null);
+    setScanError(null);
+    setScannedData(null);
+    setScannedItems([]);
+    setReceiveModal(true);
+  };
+
   const handleReceive = (e) => {
     e.preventDefault();
     if (!receiveForm.product_id || !receiveForm.quantity || Number(receiveForm.quantity) <= 0) return alert('נא לבחור מוצר ולהזין כמות');
@@ -62,9 +79,80 @@ export default function WarehouseDetail() {
       .then(() => {
         setReceiveModal(false);
         setReceiveForm({ product_id: '', quantity: '', movement_date: new Date().toISOString().slice(0, 10), source_type: 'supplier', reference_id: '', note: '' });
+        setReceiveSubMode(null);
         load();
       })
       .catch((e) => alert(e.message));
+  };
+
+  const handleScanFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = () => { setScanImage(reader.result); setScanError(null); };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const analyzeScan = () => {
+    if (!scanImage) return;
+    setScanAnalyzing(true);
+    setScanError(null);
+    api.scanDeliveryNote.analyze(scanImage)
+      .then((data) => {
+        setScannedData(data);
+        setScannedItems(
+          (data.products || []).map((p) => ({
+            product_name: p.product_name || '',
+            quantity: p.quantity ?? 1,
+            unit: p.unit || "יח'",
+            product_id: null,
+          }))
+        );
+        setReceiveForm((f) => ({ ...f, movement_date: data.date || new Date().toISOString().slice(0, 10) }));
+        const match = suppliers.find((s) => (data.supplier_name || '').trim() && s.name && data.supplier_name.includes(s.name));
+        if (match) setReceiveForm((f) => ({ ...f, reference_id: String(match.id) }));
+        setReceiveSubMode('scan-review');
+      })
+      .catch((e) => {
+        setScanError(e.message || 'שגיאה בניתוח התמונה');
+      })
+      .finally(() => setScanAnalyzing(false));
+  };
+
+  const updateScannedItem = (idx, field, value) => {
+    setScannedItems((prev) => prev.map((item, i) => (i === idx ? { ...item, [field]: value } : item)));
+  };
+
+  const receiveAllFromScan = () => {
+    const toAdd = scannedItems.filter((i) => i.product_id && Number(i.quantity) > 0);
+    if (toAdd.length === 0) return alert('נא לבחור מוצר מהקטלוג לכל פריט');
+    setScanSaving(true);
+    const date = receiveForm.movement_date;
+    const note = 'מסריקת תעודת משלוח';
+    Promise.all(
+      toAdd.map((item) =>
+        api.warehouses.createMovement(id, {
+          movement_type: 'in',
+          product_id: Number(item.product_id),
+          quantity: Number(item.quantity),
+          movement_date: date,
+          source_type: 'supplier',
+          reference_id: receiveForm.reference_id ? Number(receiveForm.reference_id) : null,
+          note,
+        })
+      )
+    )
+      .then(() => {
+        setReceiveModal(false);
+        setReceiveSubMode(null);
+        setScannedData(null);
+        setScannedItems([]);
+        setReceiveForm({ product_id: '', quantity: '', movement_date: new Date().toISOString().slice(0, 10), source_type: 'supplier', reference_id: '', note: '' });
+        load();
+      })
+      .catch((e) => alert(e.message))
+      .finally(() => setScanSaving(false));
   };
 
   const handleIssue = (e) => {
@@ -120,7 +208,7 @@ export default function WarehouseDetail() {
             {warehouse.responsible_user_name && <p style={{ margin: '0.25rem 0 0', fontSize: '0.9rem' }}>מחסנאי אחראי: {warehouse.responsible_user_name}</p>}
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <button type="button" className="btn btn-primary" style={isWorkerView ? { padding: '0.75rem 1.25rem', fontSize: '1.05rem' } : {}} onClick={() => setReceiveModal(true)}>
+            <button type="button" className="btn btn-primary" style={isWorkerView ? { padding: '0.75rem 1.25rem', fontSize: '1.05rem' } : {}} onClick={openReceiveModal}>
               קיבלתי משלוח
             </button>
             <button type="button" className="btn btn-secondary" style={isWorkerView ? { padding: '0.75rem 1.25rem', fontSize: '1.05rem' } : {}} onClick={() => setIssueModal(true)}>
@@ -239,50 +327,144 @@ export default function WarehouseDetail() {
 
       {receiveModal && (
         <div className="modal-overlay" onClick={() => setReceiveModal(false)}>
-          <div className="modal-content card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
+          <div className="modal-content card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
             <h3 style={{ margin: '0 0 1rem' }}>קבלת משלוח (כניסה)</h3>
-            <form onSubmit={handleReceive}>
-              <div className="form-group">
-                <label>מוצר *</label>
-                <select value={receiveForm.product_id} onChange={(e) => setReceiveForm((f) => ({ ...f, product_id: e.target.value }))} required>
-                  <option value="">בחר מוצר</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name} {p.code ? `(${p.code})` : ''}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="form-group">
-                <label>כמות שהתקבלה *</label>
-                <input type="number" step="0.01" min="0.01" value={receiveForm.quantity} onChange={(e) => setReceiveForm((f) => ({ ...f, quantity: e.target.value }))} required />
-              </div>
-              <div className="form-group">
-                <label>תאריך קבלה</label>
-                <input type="date" value={receiveForm.movement_date} onChange={(e) => setReceiveForm((f) => ({ ...f, movement_date: e.target.value }))} />
-              </div>
-              <div className="form-group">
-                <label>מקור</label>
-                <select value={receiveForm.source_type} onChange={(e) => setReceiveForm((f) => ({ ...f, source_type: e.target.value }))}>
-                  {SOURCE_TYPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                </select>
-              </div>
-              {receiveForm.source_type === 'supplier' && (
-                <div className="form-group">
-                  <label>ספק (אופציונלי)</label>
-                  <select value={receiveForm.reference_id} onChange={(e) => setReceiveForm((f) => ({ ...f, reference_id: e.target.value }))}>
-                    <option value="">ללא</option>
-                    {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
+
+            {receiveSubMode === null && (
+              <>
+                <div style={{ marginBottom: '1rem' }}>
+                  <button type="button" className="btn btn-secondary" style={{ fontSize: '0.9rem' }} onClick={() => setReceiveSubMode('scan')}>
+                    סריקת תעודת משלוח
+                  </button>
                 </div>
-              )}
-              <div className="form-group">
-                <label>הערה</label>
-                <input value={receiveForm.note} onChange={(e) => setReceiveForm((f) => ({ ...f, note: e.target.value }))} placeholder="אופציונלי" />
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-                <button type="submit" className="btn btn-primary">אישור – הוספה למלאי</button>
-                <button type="button" className="btn btn-secondary" onClick={() => setReceiveModal(false)}>ביטול</button>
-              </div>
-            </form>
+                <form onSubmit={handleReceive}>
+                  <div className="form-group">
+                    <label>מוצר *</label>
+                    <select value={receiveForm.product_id} onChange={(e) => setReceiveForm((f) => ({ ...f, product_id: e.target.value }))} required>
+                      <option value="">בחר מוצר</option>
+                      {products.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name} {p.code ? `(${p.code})` : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>כמות שהתקבלה *</label>
+                    <input type="number" step="0.01" min="0.01" value={receiveForm.quantity} onChange={(e) => setReceiveForm((f) => ({ ...f, quantity: e.target.value }))} required />
+                  </div>
+                  <div className="form-group">
+                    <label>תאריך קבלה</label>
+                    <input type="date" value={receiveForm.movement_date} onChange={(e) => setReceiveForm((f) => ({ ...f, movement_date: e.target.value }))} />
+                  </div>
+                  <div className="form-group">
+                    <label>מקור</label>
+                    <select value={receiveForm.source_type} onChange={(e) => setReceiveForm((f) => ({ ...f, source_type: e.target.value }))}>
+                      {SOURCE_TYPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                    </select>
+                  </div>
+                  {receiveForm.source_type === 'supplier' && (
+                    <div className="form-group">
+                      <label>ספק (אופציונלי)</label>
+                      <select value={receiveForm.reference_id} onChange={(e) => setReceiveForm((f) => ({ ...f, reference_id: e.target.value }))}>
+                        <option value="">ללא</option>
+                        {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  <div className="form-group">
+                    <label>הערה</label>
+                    <input value={receiveForm.note} onChange={(e) => setReceiveForm((f) => ({ ...f, note: e.target.value }))} placeholder="אופציונלי" />
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+                    <button type="submit" className="btn btn-primary">אישור – הוספה למלאי</button>
+                    <button type="button" className="btn btn-secondary" onClick={() => setReceiveModal(false)}>ביטול</button>
+                  </div>
+                </form>
+              </>
+            )}
+
+            {receiveSubMode === 'scan' && (
+              <>
+                <input ref={scanFileInputRef} type="file" accept="image/*" onChange={handleScanFileSelect} style={{ display: 'none' }} />
+                <div style={{ marginBottom: '1rem' }}>
+                  <button type="button" className="btn btn-secondary" style={{ marginLeft: 0 }} onClick={() => scanFileInputRef.current?.click()}>
+                    בחר תמונה
+                  </button>
+                  <button type="button" className="btn btn-secondary" onClick={() => setReceiveSubMode(null)}>חזור להזנה ידנית</button>
+                </div>
+                {scanImage && (
+                  <>
+                    <img src={scanImage} alt="תעודה" style={{ maxWidth: '100%', maxHeight: 220, borderRadius: 'var(--radius)', marginBottom: '1rem' }} />
+                    <button type="button" className="btn btn-primary" onClick={analyzeScan} disabled={scanAnalyzing} aria-busy={scanAnalyzing}>
+                      {scanAnalyzing ? 'המערכת בעומס קל, מנסה שוב אוטומטית...' : 'נתח תמונה'}
+                    </button>
+                  </>
+                )}
+                {scanError && <p style={{ color: 'var(--danger)', marginTop: '1rem' }}>{scanError}</p>}
+                <div style={{ marginTop: '1rem' }}>
+                  <button type="button" className="btn btn-secondary" onClick={() => setReceiveModal(false)}>ביטול</button>
+                </div>
+              </>
+            )}
+
+            {receiveSubMode === 'scan-review' && (
+              <>
+                <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>בחר מוצר מהקטלוג לכל שורה, ואז הוסף את כולם למלאי.</p>
+                <div className="form-group">
+                  <label>תאריך קבלה</label>
+                  <input type="date" value={receiveForm.movement_date} onChange={(e) => setReceiveForm((f) => ({ ...f, movement_date: e.target.value }))} />
+                </div>
+                {scannedData?.supplier_name && (
+                  <div className="form-group">
+                    <label>ספק (מסריקה)</label>
+                    <select value={receiveForm.reference_id} onChange={(e) => setReceiveForm((f) => ({ ...f, reference_id: e.target.value }))}>
+                      <option value="">ללא</option>
+                      {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                )}
+                <div className="table-wrap" style={{ marginBottom: '1rem', maxHeight: 240, overflow: 'auto' }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>שם מסריקה</th>
+                        <th>בחר מוצר *</th>
+                        <th>כמות</th>
+                        <th>יחידה</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {scannedItems.map((item, idx) => (
+                        <tr key={idx}>
+                          <td data-label="שם">{item.product_name}</td>
+                          <td data-label="מוצר">
+                            <select value={item.product_id || ''} onChange={(e) => updateScannedItem(idx, 'product_id', e.target.value ? Number(e.target.value) : null)} style={{ minWidth: 140 }}>
+                              <option value="">בחר</option>
+                              {products.map((p) => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td data-label="כמות">
+                            <input type="number" step="0.01" min="0.01" value={item.quantity} onChange={(e) => updateScannedItem(idx, 'quantity', e.target.value)} style={{ width: 70 }} />
+                          </td>
+                          <td data-label="יחידה">
+                            <input value={item.unit} onChange={(e) => updateScannedItem(idx, 'unit', e.target.value)} style={{ width: 60 }} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <button type="button" className="btn btn-primary" onClick={receiveAllFromScan} disabled={scanSaving || scannedItems.every((i) => !i.product_id)}>
+                    {scanSaving ? 'מוסיף...' : 'קבל את כל הפריטים למלאי'}
+                  </button>
+                  <button type="button" className="btn btn-secondary" onClick={() => { setReceiveSubMode('scan'); setScanImage(null); setScannedData(null); setScannedItems([]); }}>סרוק תמונה אחרת</button>
+                  <button type="button" className="btn btn-secondary" onClick={() => setReceiveSubMode(null)}>חזור להזנה ידנית</button>
+                  <button type="button" className="btn btn-secondary" onClick={() => setReceiveModal(false)}>ביטול</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

@@ -229,8 +229,9 @@ export default function ScanDeliveryNote() {
                   className="btn btn-primary"
                   onClick={analyze}
                   disabled={analyzing}
+                  aria-busy={analyzing}
                 >
-                  {analyzing ? 'מנתח...' : 'נתח תמונה'}
+                  {analyzing ? 'המערכת בעומס קל, מנסה שוב אוטומטית...' : 'נתח תמונה'}
                 </button>
               </div>
               {scanError && (
